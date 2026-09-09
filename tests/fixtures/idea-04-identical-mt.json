@@ -1,0 +1,50 @@
+{
+  "id": "idea-04",
+  "title": "用 Transformer 做中英机器翻译",
+  "raw": "想做一个基于 Transformer 的中英机器翻译系统，应该很有创新性。",
+  "domain": "nlp/mt",
+  "expect_pass": true,
+  "expect_verdict": "DON'T_DO",
+  "claims": [
+    {"id": "C1", "statement": "Transformer 已被用于中英机器翻译并成为主流方法", "type": "technical", "importance": "high", "status": "unknown", "confidence": 0.0},
+    {"id": "C2", "statement": "已有可直接使用的中英翻译开源实现", "type": "technical", "importance": "high", "status": "unknown", "confidence": 0.0},
+    {"id": "C3", "statement": "中英机器翻译的质量已接近或达到实用水平", "type": "scientific", "importance": "high", "status": "unknown", "confidence": 0.0},
+    {"id": "C4", "statement": "本方案在方法上与已有工作存在实质差异", "type": "novelty", "importance": "high", "status": "unknown", "confidence": 0.0},
+    {"id": "C5", "statement": "存在多个成熟的商业中英翻译服务", "type": "product", "importance": "medium", "status": "unknown", "confidence": 0.0}
+  ],
+  "queries": {
+    "C1": ["academic|transformer chinese english machine translation", "academic|neural machine translation Chinese English WMT", "github|transformer chinese english translation"],
+    "C2": ["github|fairseq chinese english translation model", "github|Helsinki-NLP opus chinese english", "web|中英翻译 开源模型 现成可用"],
+    "C3": ["academic|human parity chinese english translation", "academic|WMT chinese english translation quality", "web|机器翻译 质量 实用 水平"],
+    "C4": ["academic|novel chinese english translation architecture", "github|chinese english translation sota", "web|中英翻译 新架构 2025"],
+    "C5": ["product|chinese english translation API", "web|翻译 API 服务商 对比"]
+  },
+  "evidence": [
+    {"channel": "academic", "source_type": "academic", "title": "Attention Is All You Need", "url": "https://doi.org/10.48550/arxiv.1706.03762", "source": "arXiv", "publication_year": 2017, "summary": "提出 Transformer，并在英德/英法翻译上验证。", "evidence": "the Transformer ... achieves state-of-the-art results on WMT 2014 English-to-German and English-to-French", "claim_ids": ["C1"], "relevance": 0.95, "strength": "high", "implementation_level": "paper", "changes_judgment": true},
+    {"channel": "github", "source_type": "github", "title": "Helsinki-NLP/opus-mt-zh-en", "url": "https://github.com/Helsinki-NLP/opus-mt-zh-en", "source": "Helsinki-NLP", "publication_year": 2020, "summary": "★300+ · 中英翻译开源模型，可直接推理。", "evidence": "OPUS-MT model for Chinese-English", "claim_ids": ["C2"], "relevance": 0.9, "strength": "high", "implementation_level": "code", "changes_judgment": true},
+    {"channel": "web", "source_type": "product", "title": "主流云厂商机器翻译服务", "url": "https://example.com/mt-services", "source": "example.com", "publication_year": 2025, "summary": "多家厂商提供付费中英翻译 API。", "evidence": "提供按量计费的中英翻译接口", "claim_ids": ["C5"], "relevance": 0.7, "strength": "medium", "implementation_level": "commercial_product", "changes_judgment": false}
+  ],
+  "judgments": [
+    {"claim_id": "C1", "status": "supported", "confidence": 0.95, "rationale": "E1 原始论文即在翻译任务上验证 Transformer，中英方向属同一方法的直接应用。", "supporting_evidence_ids": ["E1"], "contradicting_evidence_ids": [], "evidence_gaps": ""},
+    {"claim_id": "C2", "status": "supported", "confidence": 0.9, "rationale": "E2 提供可直接推理的中英开源模型。", "supporting_evidence_ids": ["E2"], "contradicting_evidence_ids": [], "evidence_gaps": ""},
+    {"claim_id": "C4", "status": "contradicted", "confidence": 0.9, "rationale": "E1/E2 表明方法与实现均已存在且可直接复用，本方案未提出任何方法层面的差异。", "supporting_evidence_ids": [], "contradicting_evidence_ids": ["E1", "E2"], "evidence_gaps": ""},
+    {"claim_id": "C5", "status": "supported", "confidence": 0.7, "rationale": "E3 表明已有付费中英翻译 API。", "supporting_evidence_ids": ["E3"], "contradicting_evidence_ids": [], "evidence_gaps": ""}
+  ],
+  "prior_art": [
+    {"id": "P1", "title": "Attention Is All You Need / Transformer", "url": "https://doi.org/10.48550/arxiv.1706.03762", "kind": "academic", "similarity": "identical", "dimension": "method", "difference": "无实质差异：本 Idea 即该方法的直接应用。", "evidence_ids": ["E1"]},
+    {"id": "P2", "title": "Helsinki-NLP/opus-mt-zh-en", "url": "https://github.com/Helsinki-NLP/opus-mt-zh-en", "kind": "implementation", "similarity": "identical", "dimension": "system", "difference": "无实质差异：已有可直接使用的中英翻译实现。", "evidence_ids": ["E2"]}
+  ],
+  "analysis": {
+    "motivation": {"problem": "需要中英翻译能力", "who_cares": "有翻译需求的开发者与企业", "value": "问题真实存在", "assessment": "strong"},
+    "bottlenecks": [
+      {"id": "B1", "description": "无技术瓶颈——方案已被完全解决并产品化", "bottleneck_type": "engineering", "severity": "low", "evidence_ids": ["E2", "E3"]}
+    ],
+    "novelty": {"level": "none", "because": "P1/P2 均为 identical：方法与系统层面都没有差异，属已有方法的直接复现。", "based_on_prior_art_ids": ["P1", "P2"]}
+  },
+  "recommendation": {
+    "verdict": "DON'T_DO",
+    "rationale": "存在 identical prior art（P1 方法层、P2 系统层），C4 被 contradicted，novelty 为 none。motivation 成立但无差异化空间。",
+    "based_on_claim_ids": ["C1", "C2", "C4", "C5"],
+    "conditions": []
+  }
+}

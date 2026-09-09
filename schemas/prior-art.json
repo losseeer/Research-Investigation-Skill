@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PriorArt",
+  "description": "一项已有工作。similarity 按 problem / method / system / evaluation 四维度评估，取最强一档。",
+  "type": "object",
+  "required": ["id", "title", "kind", "similarity", "difference"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string", "pattern": "^P[0-9]+$" },
+    "title": { "type": "string", "minLength": 1 },
+    "url": { "type": "string" },
+    "kind": { "enum": ["academic", "implementation", "product"] },
+    "similarity": {
+      "enum": ["identical", "highly_similar", "partially_overlapping", "adjacent", "distinct"],
+      "description": "identical 即 Novelty 归零，直接指向 DON'T_DO"
+    },
+    "dimension": {
+      "enum": ["problem", "method", "system", "evaluation"],
+      "description": "最强相似发生的维度"
+    },
+    "difference": {
+      "type": "string",
+      "minLength": 1,
+      "description": "与当前 Idea 的具体差异，Novelty.because 只能引用此字段与 Evidence"
+    },
+    "evidence_ids": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^E[0-9]+$" }
+    }
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Evidence",
+  "description": "一条外部证据。全文不进上下文，落 evidence.jsonl。",
+  "type": "object",
+  "required": [
+    "id",
+    "channel",
+    "source_type",
+    "title",
+    "url",
+    "summary",
+    "relevance",
+    "strength",
+    "implementation_level"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^E[0-9]+$"
+    },
+    "channel": {
+      "enum": ["academic", "github", "web", "product"],
+      "description": "产出该证据的抽象检索能力，用于 budget 记账"
+    },
+    "source_type": {
+      "enum": ["academic", "github", "product", "web", "market", "user"],
+      "description": "最小集：academic / github / product / web / market；user 为扩展"
+    },
+    "title": { "type": "string", "minLength": 1 },
+    "url": { "type": "string", "minLength": 1 },
+    "source": {
+      "type": "string",
+      "description": "期刊 / 会议 / 组织 / 仓库 owner，用于判定证据独立性"
+    },
+    "publication_year": { "type": ["integer", "null"] },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "description": "进入上下文的摘要，正文不进上下文"
+    },
+    "evidence": {
+      "type": "string",
+      "description": "直接支持或反驳 Claim 的原文摘录或数据点"
+    },
+    "claim_ids": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^C[0-9]+$" }
+    },
+    "relevance": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": ">= 0.6 的条目才进入报告阶段上下文"
+    },
+    "strength": {
+      "enum": ["high", "medium", "low"],
+      "description": "high = 一手数据源且直接验证 Claim；medium = 二手或间接；low = 单一来源无佐证"
+    },
+    "implementation_level": {
+      "enum": ["idea", "paper", "code", "prototype", "production", "commercial_product"],
+      "description": "idea → paper → code → prototype → production → commercial_product，跨级必须显式举证"
+    },
+    "changes_judgment": {
+      "type": "boolean",
+      "description": "是否改变了对应 Claim 的判断，Evidence Saturation 的计数依据"
+    },
+    "retrieved_at": { "type": "string" }
+  }
+}

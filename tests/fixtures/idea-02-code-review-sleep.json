@@ -1,0 +1,46 @@
+{
+  "id": "idea-02",
+  "title": "睡眠不足会显著降低代码审查的缺陷检出率",
+  "raw": "想验证一个假设：reviewer 前一晚睡眠不足时，代码审查发现缺陷的数量明显下降；据此做一个审查排班工具。",
+  "domain": "software-engineering/empirical",
+  "expect_pass": true,
+  "expect_verdict": "INSUFFICIENT_EVIDENCE",
+  "claims": [
+    {"id": "C1", "statement": "睡眠剥夺会显著降低需要持续注意力的认知任务表现", "type": "scientific", "importance": "high", "status": "unknown", "confidence": 0.0},
+    {"id": "C2", "statement": "已有实证研究直接测量过睡眠与代码审查质量的关系", "type": "scientific", "importance": "high", "status": "unknown", "confidence": 0.0},
+    {"id": "C3", "statement": "企业在排班时能拿到并使用开发者的睡眠数据", "type": "technical", "importance": "high", "status": "unknown", "confidence": 0.0},
+    {"id": "C4", "statement": "团队愿意为审查排班工具改变现有流程", "type": "market", "importance": "medium", "status": "unknown", "confidence": 0.0},
+    {"id": "C5", "statement": "已有面向工程效能的排班或负荷管理产品", "type": "product", "importance": "medium", "status": "unknown", "confidence": 0.0}
+  ],
+  "queries": {
+    "C1": ["academic|sleep deprivation sustained attention performance", "academic|sleep loss cognitive performance meta-analysis", "web|sleep deprivation impact on task accuracy study"],
+    "C2": ["academic|sleep and code review quality empirical", "academic|developer fatigue code review defect detection", "github|code review quality metrics"],
+    "C3": ["github|wearable sleep API integration", "web|企业 获取 员工 睡眠数据 合规", "academic|wearable sleep tracking workplace feasibility"],
+    "C4": ["web|engineering team scheduling tool adoption", "web|研发效能 工具 落地 阻力"],
+    "C5": ["product|developer productivity scheduling platform", "web|engineering analytics platform vendor"]
+  },
+  "evidence": [
+    {"channel": "academic", "source_type": "academic", "title": "The effects of sleep deprivation on sustained attention: a meta-analysis", "url": "https://doi.org/10.1016/j.smrv.2018.12.003", "source": "Sleep Medicine Reviews", "publication_year": 2019, "summary": "睡眠剥夺对持续注意力的效应量汇总。", "evidence": "sleep deprivation significantly impairs sustained attention", "claim_ids": ["C1"], "relevance": 0.9, "strength": "high", "implementation_level": "paper", "changes_judgment": true},
+    {"channel": "academic", "source_type": "academic", "title": "Sleep deprivation and sustained attention performance: a meta-analysis", "url": "https://doi.org/10.2466/pms.104.2.523-535", "source": "Perceptual and Motor Skills", "publication_year": 2007, "summary": "独立样本的另一份荟萃分析。", "evidence": "effect sizes indicate reliable performance decrements", "claim_ids": ["C1"], "relevance": 0.8, "strength": "high", "implementation_level": "paper", "changes_judgment": true}
+  ],
+  "judgments": [
+    {"claim_id": "C1", "status": "supported", "confidence": 0.85, "rationale": "E1 与 E2 是两份独立的荟萃分析，都指向睡眠剥夺损害持续注意力。", "supporting_evidence_ids": ["E1", "E2"], "contradicting_evidence_ids": [], "evidence_gaps": ""}
+  ],
+  "prior_art": [
+    {"id": "P1", "title": "Sleep deprivation and sustained attention performance: a meta-analysis", "url": "https://doi.org/10.2466/pms.104.2.523-535", "kind": "academic", "similarity": "partially_overlapping", "dimension": "problem", "difference": "只覆盖一般认知任务，未涉及代码审查这一具体任务。", "evidence_ids": ["E2"]}
+  ],
+  "analysis": {
+    "motivation": {"problem": "排班时无法量化 reviewer 状态导致的漏检", "who_cares": "研发团队；C4 未裁决", "value": "降低漏检", "assessment": "unclear"},
+    "bottlenecks": [
+      {"id": "B1", "description": "C2 无直接证据：睡眠与代码审查质量的关系未被直接测量过", "bottleneck_type": "research", "severity": "high", "evidence_ids": []},
+      {"id": "B2", "description": "获取员工睡眠数据在合规与接受度上存在根本障碍", "bottleneck_type": "fundamental", "severity": "high", "evidence_ids": []}
+    ],
+    "novelty": {"level": "moderate", "because": "P1 只覆盖一般认知任务；本 Idea 把假设落到代码审查这一具体任务，问题维度不同，但 C2 无直接证据支撑。", "based_on_prior_art_ids": ["P1"]}
+  },
+  "recommendation": {
+    "verdict": "INSUFFICIENT_EVIDENCE",
+    "rationale": "C1 supported，但 C2/C3 两条 high Claim 均未裁决；B2 为 fundamental 类瓶颈。",
+    "based_on_claim_ids": ["C1", "C2", "C3"],
+    "conditions": ["先做 C2 的直接实证测量再谈产品化"]
+  }
+}

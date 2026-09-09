@@ -1,0 +1,53 @@
+{
+  "id": "idea-01",
+  "title": "用 LLM Agent 自动做旅游行程动态规划",
+  "raw": "做一个 LLM Agent，行程开始后能根据天气、闭馆、交通延误自动重排。",
+  "domain": "travel/agent",
+  "expect_pass": true,
+  "expect_verdict": "INSUFFICIENT_EVIDENCE",
+  "claims": [
+    {"id": "C1", "statement": "旅行者会因天气、闭馆、延误等突发事件临时调整行程", "type": "user_problem", "importance": "high", "status": "unknown", "confidence": 0.0},
+    {"id": "C2", "statement": "现有主流行程规划产品不支持行程开始后的动态重排", "type": "product", "importance": "high", "status": "unknown", "confidence": 0.0},
+    {"id": "C3", "statement": "已有研究把 LLM 用于带约束的行程规划", "type": "technical", "importance": "high", "status": "unknown", "confidence": 0.0},
+    {"id": "C4", "statement": "约束满足或运筹方法已能解决行程规划，无需引入 LLM", "type": "scientific", "importance": "high", "status": "unknown", "confidence": 0.0},
+    {"id": "C7", "statement": "已有工作把 LLM 规划能力与实时外部状态闭环结合", "type": "novelty", "importance": "high", "status": "unknown", "confidence": 0.0},
+    {"id": "C5", "statement": "存在以动态行程调整为卖点的商业化产品", "type": "product", "importance": "medium", "status": "unknown", "confidence": 0.0},
+    {"id": "C6", "statement": "用户愿意为自动行程规划付费", "type": "market", "importance": "low", "status": "unknown", "confidence": 0.0}
+  ],
+  "queries": {
+    "C1": ["web|旅行中临时改行程 用户行为 调研", "web|travel plan disruption weather closure survey", "academic|travel itinerary disruption uncertainty"],
+    "C2": ["product|AI trip planner dynamic replanning app", "product|行程规划 App 行程中修改", "web|trip planning app cannot modify itinerary during trip"],
+    "C3": ["github|llm agent itinerary planning", "github|travel planner agent langchain", "academic|large language model travel itinerary planning"],
+    "C4": ["academic|tourist trip design problem optimization", "academic|itinerary planning constraint satisfaction", "github|itinerary optimization solver"],
+    "C7": ["github|realtime replanning agent weather API", "academic|LLM agent closed-loop real-world state replanning", "web|实时重排 行程 Agent 产品"],
+    "C5": ["product|dynamic itinerary adjustment travel startup", "web|AI 行程助手 创业公司 产品"],
+    "C6": ["web|travel planning app willingness to pay"]
+  },
+  "evidence": [
+    {"channel": "academic", "source_type": "academic", "title": "Research on Travel Route Planning Optimization based on LLM", "url": "https://doi.org/10.20944/preprints202407.1398.v1", "source": "Preprints.org", "publication_year": 2024, "summary": "用 LLM 解析 POI 类型序列并优化路线，此前工作只考虑时间因素。", "evidence": "we specifically leveraged the capabilities of large language model to parse and respond to complex travel requirements.", "claim_ids": ["C3"], "relevance": 0.9, "strength": "high", "implementation_level": "paper", "changes_judgment": true},
+    {"channel": "academic", "source_type": "academic", "title": "ITINERA: Integrating Spatial Optimization with LLMs for Open-domain Urban Itinerary Planning", "url": "https://doi.org/10.48550/arxiv.2402.07204", "source": "arXiv (Cornell University)", "publication_year": 2024, "summary": "把空间优化与 LLM 结合的开放域城市行程规划。", "evidence": "integrating spatial optimization with large language models", "claim_ids": ["C3"], "relevance": 0.9, "strength": "high", "implementation_level": "paper", "changes_judgment": true},
+    {"channel": "academic", "source_type": "academic", "title": "TravelAgent: An AI Assistant for Personalized Travel Planning", "url": "https://doi.org/10.48550/arxiv.2409.08069", "source": "arXiv (Cornell University)", "publication_year": 2024, "summary": "个性化行程规划的 AI 助手。", "evidence": "an AI assistant for personalized travel planning", "claim_ids": ["C3"], "relevance": 0.8, "strength": "high", "implementation_level": "paper", "changes_judgment": true},
+    {"channel": "github", "source_type": "github", "title": "shouzhuoshouzhuo/FloatTrip", "url": "https://github.com/shouzhuoshouzhuo/FloatTrip", "source": "shouzhuoshouzhuo", "publication_year": 2024, "summary": "★12 · Python · LLM 行程规划。", "evidence": "trip planner", "claim_ids": ["C3", "C7"], "relevance": 0.7, "strength": "medium", "implementation_level": "code", "changes_judgment": true}
+  ],
+  "judgments": [
+    {"claim_id": "C3", "status": "supported", "confidence": 0.8, "rationale": "E1/E2/E3 三篇独立工作把 LLM 用于带 POI 与时间约束的行程规划；E4(FloatTrip) 提供可运行实现。", "supporting_evidence_ids": ["E1", "E2", "E3", "E4"], "contradicting_evidence_ids": [], "evidence_gaps": ""}
+  ],
+  "prior_art": [
+    {"id": "P1", "title": "ITINERA", "url": "https://doi.org/10.48550/arxiv.2402.07204", "kind": "academic", "similarity": "highly_similar", "dimension": "problem", "difference": "只做行前静态规划，未接入实时事件源，不支持行程中重排。", "evidence_ids": ["E2"]},
+    {"id": "P2", "title": "FloatTrip", "url": "https://github.com/shouzhuoshouzhuo/FloatTrip", "kind": "implementation", "similarity": "partially_overlapping", "dimension": "system", "difference": "以 LLM Agent 编排为主，但仅覆盖行前规划，无实时重排闭环。", "evidence_ids": ["E4"]}
+  ],
+  "analysis": {
+    "motivation": {"problem": "行程开始后因天气/闭馆/延误需临时重排", "who_cares": "自由行用户；C1 未裁决，规模无数据", "value": "减少手工重排成本", "assessment": "unclear"},
+    "bottlenecks": [
+      {"id": "B1", "description": "实时事件源（天气/营业时间）接入与可靠性", "bottleneck_type": "engineering", "severity": "high", "evidence_ids": []},
+      {"id": "B2", "description": "LLM 在多约束长行程下的规划成功率未定论", "bottleneck_type": "research", "severity": "high", "evidence_ids": ["E1"]}
+    ],
+    "novelty": {"level": "incremental", "because": "P1/P2 的 difference 均指向无实时事件闭环，仅 system 维度存在增量。", "based_on_prior_art_ids": ["P1", "P2"]}
+  },
+  "recommendation": {
+    "verdict": "INSUFFICIENT_EVIDENCE",
+    "rationale": "C3 supported，但 C1/C2/C4/C7 四条 high Claim 均为 insufficient_evidence，novelty 只到 incremental。",
+    "based_on_claim_ids": ["C1", "C2", "C3", "C4", "C7"],
+    "conditions": ["补 web 通道验证用户是否真有行程中重排需求", "补 product 通道核查现有产品能力"]
+  }
+}

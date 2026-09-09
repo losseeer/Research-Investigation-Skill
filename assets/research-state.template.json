@@ -1,0 +1,55 @@
+{
+  "schema_version": "1.0",
+  "idea": {
+    "title": "",
+    "raw": "",
+    "slug": "",
+    "domain": "",
+    "constraints": []
+  },
+  "status": "init",
+  "stage": 0,
+  "claims": [],
+  "search_plans": [],
+  "judgments": [],
+  "prior_art": [],
+  "analysis": {
+    "motivation": {
+      "problem": "",
+      "who_cares": "",
+      "value": "",
+      "assessment": "unclear"
+    },
+    "bottlenecks": [],
+    "novelty": {
+      "level": "none",
+      "because": "",
+      "based_on_prior_art_ids": []
+    }
+  },
+  "recommendation": {
+    "verdict": "INSUFFICIENT_EVIDENCE",
+    "rationale": "",
+    "based_on_claim_ids": [],
+    "conditions": []
+  },
+  "search_budget": {
+    "max_iterations": 8,
+    "max_queries": 30,
+    "iterations": 0,
+    "used": {
+      "queries": 0,
+      "results": 0
+    },
+    "by_channel": {
+      "academic": { "max_queries": 12, "max_results": 80, "queries": 0, "results": 0 },
+      "github": { "max_queries": 6, "max_results": 30, "queries": 0, "results": 0 },
+      "web": { "max_queries": 8, "max_results": 30, "queries": 0, "results": 0 },
+      "product": { "max_queries": 4, "max_results": 20, "queries": 0, "results": 0 }
+    }
+  },
+  "unavailable_channels": [],
+  "saturation": {},
+  "created_at": "",
+  "updated_at": ""
+}

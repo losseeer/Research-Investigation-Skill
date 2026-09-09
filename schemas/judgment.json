@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Judgment",
+  "description": "Claim 的裁决结果。rationale 必须引用 evidence_ids，禁止无证据的自由陈述。",
+  "type": "object",
+  "required": [
+    "claim_id",
+    "status",
+    "confidence",
+    "rationale",
+    "supporting_evidence_ids",
+    "contradicting_evidence_ids"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "claim_id": { "type": "string", "pattern": "^C[0-9]+$" },
+    "status": {
+      "enum": ["supported", "partially_supported", "contradicted", "insufficient_evidence"],
+      "description": "裁决态，不含 unknown"
+    },
+    "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "rationale": {
+      "type": "string",
+      "minLength": 1,
+      "description": "必须指向具体 evidence_ids"
+    },
+    "supporting_evidence_ids": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^E[0-9]+$" }
+    },
+    "contradicting_evidence_ids": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^E[0-9]+$" }
+    },
+    "evidence_gaps": {
+      "type": "string",
+      "description": "还缺什么证据才能把该 Claim 从 insufficient_evidence 变为可裁决"
+    }
+  }
+}

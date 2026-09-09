@@ -1,0 +1,45 @@
+{
+  "id": "idea-03",
+  "title": "面向老年人的语音记账 App",
+  "raw": "给老年人做一个只用语音就能记账的 App，不用打字、不用看复杂界面。",
+  "domain": "consumer/product",
+  "expect_pass": true,
+  "expect_verdict": "INSUFFICIENT_EVIDENCE",
+  "claims": [
+    {"id": "C1", "statement": "老年人有未被满足的记账需求", "type": "user_problem", "importance": "high", "status": "unknown", "confidence": 0.0},
+    {"id": "C2", "statement": "现有语音助手已能准确完成记账类口语指令", "type": "technical", "importance": "high", "status": "unknown", "confidence": 0.0},
+    {"id": "C3", "statement": "已有面向老年人的语音记账或类似产品", "type": "product", "importance": "high", "status": "unknown", "confidence": 0.0},
+    {"id": "C4", "statement": "老年用户愿意为记账类工具付费", "type": "market", "importance": "medium", "status": "unknown", "confidence": 0.0},
+    {"id": "C5", "statement": "方言与口音会显著影响语音识别准确率", "type": "technical", "importance": "medium", "status": "unknown", "confidence": 0.0}
+  ],
+  "queries": {
+    "C1": ["web|老年人 记账 需求 调研", "web|elderly personal finance management needs", "academic|older adults money management tools"],
+    "C2": ["github|voice assistant expense tracking", "github|speech to text expense parser", "academic|speech recognition financial commands accuracy"],
+    "C3": ["product|voice expense tracker app elderly", "product|语音记账 App 老人", "web|senior friendly budgeting app"],
+    "C4": ["web|老年人 付费 意愿 工具类 App", "web|elderly willingness to pay mobile app"],
+    "C5": ["academic|dialect accent speech recognition error rate", "github|chinese dialect asr"]
+  },
+  "evidence": [
+    {"channel": "github", "source_type": "github", "title": "voice-expense-tracker", "url": "https://github.com/example/voice-expense-tracker", "source": "example", "publication_year": 2023, "summary": "★45 · Python · 语音记账。", "evidence": "record expenses by voice", "claim_ids": ["C2", "C3"], "relevance": 0.7, "strength": "medium", "implementation_level": "code", "changes_judgment": true},
+    {"channel": "web", "source_type": "product", "title": "某语音记账小程序", "url": "https://example.com/voice-accounting", "source": "example.com", "publication_year": 2024, "summary": "面向大众的语音记账小程序，未针对老年人做适配。", "evidence": "支持语音录入收支", "claim_ids": ["C3"], "relevance": 0.6, "strength": "low", "implementation_level": "production", "changes_judgment": false}
+  ],
+  "judgments": [
+    {"claim_id": "C3", "status": "partially_supported", "confidence": 0.5, "rationale": "E1 为仓库（code 级），E2 为面向大众的产品（production 级）但不针对老年人；只能证明「语音记账」存在，不能证明「面向老年人的语音记账」已有。", "supporting_evidence_ids": ["E1", "E2"], "contradicting_evidence_ids": [], "evidence_gaps": "需要 product 通道专门核查面向老年人群体的产品"}
+  ],
+  "prior_art": [
+    {"id": "P1", "title": "某语音记账小程序", "url": "https://example.com/voice-accounting", "kind": "product", "similarity": "partially_overlapping", "dimension": "method", "difference": "语音记账方法相同，但目标人群是大众，无老年人适配（大字体、方言、免打字流程）。", "evidence_ids": ["E2"]}
+  ],
+  "analysis": {
+    "motivation": {"problem": "老年人因打字与界面复杂而放弃记账", "who_cares": "老年人群体；C1 未裁决", "value": "降低记账门槛", "assessment": "unclear"},
+    "bottlenecks": [
+      {"id": "B1", "description": "方言与口音下的识别准确率", "bottleneck_type": "engineering", "severity": "high", "evidence_ids": []}
+    ],
+    "novelty": {"level": "incremental", "because": "P1 的 difference 表明方法与系统均已存在，差异只在目标人群与交互适配层面。", "based_on_prior_art_ids": ["P1"]}
+  },
+  "recommendation": {
+    "verdict": "INSUFFICIENT_EVIDENCE",
+    "rationale": "C1/C2 未裁决；C3 仅 partially_supported，且 novelty 只有 incremental。",
+    "based_on_claim_ids": ["C1", "C2", "C3"],
+    "conditions": ["先验证 C1 的真实需求强度，再判断人群适配能否构成足够差异"]
+  }
+}

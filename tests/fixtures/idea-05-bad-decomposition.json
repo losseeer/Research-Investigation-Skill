@@ -1,0 +1,19 @@
+{
+  "id": "idea-05",
+  "title": "负例：分解与检索规划都不合规",
+  "raw": "这个 fixture 故意不合规，用于验证 stage 1 / stage 2 门禁确实会拦截，而不是放行。",
+  "domain": "test/negative",
+  "expect_pass": false,
+  "expect_fail_stage": 1,
+  "expect_error_contains": ["Claim 数量", "type 覆盖", "high 的 Claim"],
+  "claims": [
+    {"id": "C1", "statement": "这个方向很有价值", "type": "technical", "importance": "low", "status": "unknown", "confidence": 0.0},
+    {"id": "C2", "statement": "做一个智能系统", "type": "technical", "importance": "low", "status": "unknown", "confidence": 0.0},
+    {"id": "C3", "statement": "用户会喜欢", "type": "technical", "importance": "low", "status": "unknown", "confidence": 0.0}
+  ],
+  "queries": {
+    "C1": ["academic|AI", "academic|AI system", "academic|AI platform"],
+    "C2": ["academic|智能 系统"],
+    "C3": ["academic|用户 喜欢"]
+  }
+}

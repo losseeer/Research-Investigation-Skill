@@ -1,0 +1,195 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ResearchState",
+  "description": "一次 Idea 调查的完整状态。落 research/<idea-slug>/research-state.json，Evidence 单独落 evidence.jsonl。",
+  "type": "object",
+  "required": ["schema_version", "idea", "status", "stage", "claims", "search_budget"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "enum": ["1.0"] },
+    "idea": {
+      "type": "object",
+      "required": ["title"],
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "raw": { "type": "string" },
+        "slug": { "type": "string" },
+        "domain": { "type": "string" },
+        "constraints": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "status": {
+      "enum": ["init", "decomposed", "searched", "verified", "analyzed", "reported", "blocked"]
+    },
+    "stage": { "type": "integer", "minimum": 0, "maximum": 6 },
+    "claims": {
+      "type": "array",
+      "items": { "$ref": "claim.json" }
+    },
+    "search_plans": {
+      "type": "array",
+      "additionalProperties": false,
+      "items": {
+        "type": "object",
+        "required": ["claim_id", "queries"],
+        "additionalProperties": false,
+        "properties": {
+          "claim_id": { "type": "string", "pattern": "^C[0-9]+$" },
+          "queries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "channel", "query"],
+              "additionalProperties": false,
+              "properties": {
+                "id": { "type": "string", "pattern": "^Q[0-9]+$" },
+                "channel": { "enum": ["academic", "github", "web", "product"] },
+                "query": { "type": "string", "minLength": 1 },
+                "status": { "enum": ["pending", "done", "failed", "skipped"] },
+                "result_count": { "type": "integer", "minimum": 0 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "judgments": {
+      "type": "array",
+      "items": { "$ref": "judgment.json" }
+    },
+    "prior_art": {
+      "type": "array",
+      "items": { "$ref": "prior-art.json" }
+    },
+    "analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "motivation": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "problem": { "type": "string" },
+            "who_cares": { "type": "string" },
+            "value": { "type": "string" },
+            "assessment": { "enum": ["strong", "moderate", "weak", "unclear"] }
+          }
+        },
+        "bottlenecks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "description", "bottleneck_type"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string", "pattern": "^B[0-9]+$" },
+              "description": { "type": "string", "minLength": 1 },
+              "bottleneck_type": {
+                "enum": ["engineering", "research", "fundamental"],
+                "description": "engineering = 工程量/集成/数据；research = 方法未定需实验验证；fundamental = 受既有理论或能力边界限制"
+              },
+              "severity": { "enum": ["high", "medium", "low"] },
+              "evidence_ids": { "type": "array", "items": { "type": "string", "pattern": "^E[0-9]+$" } }
+            }
+          }
+        },
+        "novelty": {
+          "type": "object",
+          "required": ["level"],
+          "additionalProperties": false,
+          "properties": {
+            "level": {
+              "enum": ["none", "incremental", "moderate", "significant", "breakthrough"]
+            },
+            "because": {
+              "type": "string",
+              "description": "只能引用 prior_art.difference 与 Evidence，禁止抽象断言"
+            },
+            "based_on_prior_art_ids": {
+              "type": "array",
+              "items": { "type": "string", "pattern": "^P[0-9]+$" }
+            }
+          }
+        }
+      }
+    },
+    "recommendation": {
+      "type": "object",
+      "required": ["verdict"],
+      "additionalProperties": false,
+      "properties": {
+        "verdict": {
+          "enum": ["DO", "MODIFY", "PIVOT", "DON'T_DO", "INSUFFICIENT_EVIDENCE"]
+        },
+        "rationale": { "type": "string" },
+        "based_on_claim_ids": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^C[0-9]+$" }
+        },
+        "conditions": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "search_budget": {
+      "type": "object",
+      "required": ["max_iterations", "max_queries", "iterations", "used", "by_channel"],
+      "additionalProperties": false,
+      "properties": {
+        "max_iterations": { "type": "integer", "minimum": 1 },
+        "max_queries": { "type": "integer", "minimum": 1 },
+        "iterations": { "type": "integer", "minimum": 0 },
+        "used": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "queries": { "type": "integer", "minimum": 0 },
+            "results": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "by_channel": {
+          "type": "object",
+          "description": "每通道的额度与已用；额度由 state 自身携带，脚本不内置常量",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["max_queries", "max_results", "queries", "results"],
+            "additionalProperties": false,
+            "properties": {
+              "max_queries": { "type": "integer", "minimum": 0 },
+              "max_results": { "type": "integer", "minimum": 0 },
+              "queries": { "type": "integer", "minimum": 0 },
+              "results": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "unavailable_channels": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["channel", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "channel": { "enum": ["academic", "github", "web", "product"] },
+          "reason": { "type": "string", "minLength": 1 },
+          "attempted_at": { "type": "string" }
+        }
+      }
+    },
+    "saturation": {
+      "type": "object",
+      "description": "Evidence Saturation 计数，key 为 Claim id",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "rounds_without_change": { "type": "integer", "minimum": 0 },
+          "stopped": { "type": "boolean" },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "created_at": { "type": "string" },
+    "updated_at": { "type": "string" }
+  }
+}

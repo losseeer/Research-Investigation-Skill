@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Claim",
+  "description": "一个可验证的原子断言。Idea 被分解为若干 Claim，判断只能由 Claim 的裁决聚合而来。",
+  "type": "object",
+  "required": ["id", "statement", "type", "importance", "status", "confidence"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^C[0-9]+$"
+    },
+    "statement": {
+      "type": "string",
+      "minLength": 1,
+      "description": "可被证据支持或反驳的陈述句，不含形容词堆砌"
+    },
+    "type": {
+      "enum": ["scientific", "technical", "product", "market", "user_problem", "application", "novelty"]
+    },
+    "importance": {
+      "enum": ["high", "medium", "low"],
+      "description": "high Claim 全部裁决完才能进入分析阶段"
+    },
+    "status": {
+      "enum": ["supported", "partially_supported", "contradicted", "unknown", "insufficient_evidence"],
+      "description": "unknown = 尚未调查；insufficient_evidence = 已调查但证据不足，禁止推导为「不存在」"
+    },
+    "search_queries": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "evidence_ids": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^E[0-9]+$" }
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "无关联 Evidence 时必须为 0.0"
+    },
+    "notes": { "type": "string" }
+  }
+}
