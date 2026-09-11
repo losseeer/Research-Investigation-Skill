@@ -68,7 +68,7 @@
 ## 写回
 
 ```bash
-python3 scripts/validate_state.py <state-dir> set-evidence E3 \
+python3 scripts/validate_state.py set-evidence <state-dir> E3 \
   --data '{"relevance":0.8,"strength":"high","claim_ids":["C3","C4"],"changes_judgment":true}'
 ```
 
@@ -85,6 +85,6 @@ python3 scripts/validate_state.py <state-dir> set-evidence E3 \
 ## 出口
 
 ```bash
-python3 scripts/validate_state.py <state-dir> check --stage 3
-python3 scripts/validate_state.py <state-dir> saturation
+python3 scripts/validate_state.py check <state-dir> --stage 3
+python3 scripts/validate_state.py saturation <state-dir>
 ```

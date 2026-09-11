@@ -95,7 +95,7 @@
 ## 写回
 
 ```bash
-python3 scripts/validate_state.py <state-dir> merge --data '{
+python3 scripts/validate_state.py merge <state-dir> --data '{
   "analysis": {
     "motivation": {"problem":"…","who_cares":"…","value":"…","assessment":"moderate"},
     "bottlenecks": [
@@ -120,5 +120,5 @@ python3 scripts/validate_state.py <state-dir> merge --data '{
 ## 出口
 
 ```bash
-python3 scripts/validate_state.py <state-dir> check --stage 5
+python3 scripts/validate_state.py check <state-dir> --stage 5
 ```

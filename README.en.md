@@ -158,3 +158,11 @@ Six stages (each stage exit is gated by automatic validation — failure blocks 
 | 4 | Evidence → judgment; claims without evidence are honestly marked `insufficient_evidence` |
 | 5 | Prior Art comparison + bottleneck classification + novelty rating |
 | 6 | Report generated from on-disk state only — no transient context leaks in |
+
+## TODO
+
+- [ ] Add quick / standard / deep profiles.
+- [ ] Add time, context, and fetch limits.
+- [ ] Implement query state, deduplication, and unified accounting.
+- [ ] Implement automatic saturation and top-k Evidence trimming.
+- [ ] Optimize retries and caching, and add regression tests.

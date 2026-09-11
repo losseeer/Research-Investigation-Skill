@@ -114,5 +114,5 @@ Idea：**用 LLM Agent 自动做旅游行程动态规划**
 ## 出口
 
 ```bash
-python3 scripts/validate_state.py <state-dir> check --stage 1
+python3 scripts/validate_state.py check <state-dir> --stage 1
 ```

@@ -28,7 +28,7 @@
 `based_on_claim_ids` 必填，指向支撑该结论的 Claim（门禁会卡）。
 
 ```bash
-python3 scripts/validate_state.py <dir> merge --data '{
+python3 scripts/validate_state.py merge <dir> --data '{
   "recommendation": {
     "verdict": "INSUFFICIENT_EVIDENCE",
     "rationale": "C3（LLM 行程规划）supported，但 C1/C2/C4/C7 四条 high Claim 均为 insufficient_evidence，novelty 只能给到 incremental。",
@@ -87,5 +87,5 @@ python3 scripts/validate_state.py <dir> merge --data '{
 ## 出口
 
 ```bash
-python3 scripts/validate_state.py <dir> check --stage 6
+python3 scripts/validate_state.py check <dir> --stage 6
 ```

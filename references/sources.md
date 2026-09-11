@@ -21,8 +21,8 @@ env 代理（端口每次会话都变，只能从 HTTPS_PROXY 读）
 
 | 能力名 | 实现 | 端点 | 鉴权 | 限额 | 网络路径 | 状态 |
 |---|---|---|---|---|---|---|
-| `academic_search` | OpenAlex | `api.openalex.org/works` | 无，但**必须带 `mailto`** | 10 req/s | env 代理（白名单内） | ✅ 主通道 |
-| `academic_search` | Crossref | `api.crossref.org/works` | 无，`mailto` 走 polite pool | 较宽松 | env 代理（白名单内） | ✅ 副通道（DOI 校验） |
+| `academic_search` | OpenAlex | `api.openalex.org/works` | 无，但**必须带 `mailto`** | 10 req/s | env 代理（白名单内） | ✅ 主通道（⚠️ 间歇 503，见下） |
+| `academic_search` | Crossref | `api.crossref.org/works` | 无，`mailto` 走 polite pool | 较宽松 | env 代理（白名单内） | ✅ 副通道（DOI 校验）＋ **OpenAlex 503 时的替代主通道** |
 | `academic_search` | arXiv | `export.arxiv.org/api/query` | 无 | 官方建议 3s/req | 7897 / WebFetch | ⚠️ 见下 |
 | `github_search` | GitHub Search API | `api.github.com/search/repositories` | `GITHUB_TOKEN` 可选 | 匿名 **10 req/min**、core 60/hr | env 代理（白名单内） | ✅ |
 | `web_search` | 内置 WebSearch + WebFetch | — | — | — | 内置工具，不经沙箱 | ✅（Agent 侧，非脚本） |
@@ -39,6 +39,17 @@ env 代理（端口每次会话都变，只能从 HTTPS_PROXY 读）
   会混入只在参考文献里提过一次关键词的论文（实测混入过无关医学论文）。
 - `abstract_inverted_index` 是 `{词: [位置]}`，需还原语序（脚本已处理）。
 - 已收录 arXiv 预印本（实测 25 条结果中 3 条来自 arXiv），因此 arXiv 不可用时仍有覆盖。
+- ⚠️ **OpenAlex 会间歇性整段返回 HTTP 503（实测 2026-09-10 一轮：13 次调用中 5 次 503，
+  且退避重试 3s/6s 无效），不是瞬时抖动，而是持续数十秒的不可用窗口。**
+  `search_academic.py` 因此会反复向 `unavailable_channels` 追加同名记录——**这是通道抖动，
+  不等于通道失效**，不要据此停止整个 academic 通道。处置方式：
+  1. 立即用 `--source crossref` 重跑同一条 query（Crossref 在本机从未出现该问题）；
+  2. **规划额度时必须给 academic 留 2–3 条冗余 query**，因为失败重跑会占用 `max_queries` 名额
+     （注意：脚本只在**成功**时记账，`queries=len(sources)-len(failures)`，失败不扣额度，
+     但跨通道重跑会扣对应通道的额度）。
+  3. 常见的连带损失是 **Crossref 缺 `abstract`**，导致该条 Evidence 拿不到 `evidence` 摘录、
+     `relevance` 只能给到 0.5 以下而进不了报告。遇到这种条目要单独在报告 §11 声明，
+     不能当成「已覆盖」。
 
 ### Crossref
 

@@ -35,8 +35,8 @@ finalize → analyze → report
 每轮结束执行：
 
 ```bash
-python3 scripts/validate_state.py <dir> consume --channel academic --iterations 1 --queries 0 --results 0
-python3 scripts/validate_state.py <dir> check
+python3 scripts/validate_state.py consume <dir> --channel academic --iterations 1 --queries 0 --results 0
+python3 scripts/validate_state.py check <dir>
 ```
 
 ## 停止条件
@@ -58,7 +58,7 @@ python3 scripts/validate_state.py <dir> check
 用 `saturation` 子命令看实时状态：
 
 ```bash
-python3 scripts/validate_state.py <dir> saturation
+python3 scripts/validate_state.py saturation <dir>
 # claim     ev  indep  chg    dup  rounds  flags
 # C3         9      8    1    0.0       0  SATURATED independence>=3
 ```
@@ -72,7 +72,7 @@ python3 scripts/validate_state.py <dir> saturation
 **不是硬凑结论，而是强制收口**：
 
 ```bash
-python3 scripts/validate_state.py <dir> finalize --reason "预算耗尽："
+python3 scripts/validate_state.py finalize <dir> --reason "预算耗尽："
 ```
 
 它把所有还没裁决的 Claim 一律补成 `insufficient_evidence`（`confidence` 强制 0.0），
@@ -96,7 +96,7 @@ unavailable 后，不要再对它发起请求，改走替代路径（见 `refere
 ## 每轮必看
 
 ```bash
-python3 scripts/validate_state.py <dir> budget      # 还剩多少额度
-python3 scripts/validate_state.py <dir> saturation  # 哪些方向已经饱和
-python3 scripts/validate_state.py <dir> check       # 结构是否还合法
+python3 scripts/validate_state.py budget <dir>      # 还剩多少额度
+python3 scripts/validate_state.py saturation <dir>  # 哪些方向已经饱和
+python3 scripts/validate_state.py check <dir>       # 结构是否还合法
 ```

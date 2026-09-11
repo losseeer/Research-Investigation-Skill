@@ -59,7 +59,7 @@
 ## 写回
 
 ```bash
-python3 scripts/validate_state.py <state-dir> merge --data '{
+python3 scripts/validate_state.py merge <state-dir> --data '{
   "prior_art": [{
     "id":"P1","title":"TravelAgent: An AI Assistant for Personalized Travel Planning",
     "url":"https://...","kind":"academic",
@@ -81,5 +81,5 @@ python3 scripts/validate_state.py <state-dir> merge --data '{
 ## 出口
 
 ```bash
-python3 scripts/validate_state.py <state-dir> check --stage 5
+python3 scripts/validate_state.py check <state-dir> --stage 5
 ```

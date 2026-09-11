@@ -55,10 +55,29 @@ research/<idea-slug>/
 每个 Stage 出口执行：
 
 ```bash
-python3 scripts/validate_state.py research/<idea-slug>
+python3 scripts/validate_state.py check --stage <N> research/<idea-slug>
 ```
 
 校验不通过则停在当前 Stage（不进入下一 Stage）。
+
+## CLI 速查（argparse 子命令在前，路径在后）
+
+`<dir>` 是位置参数，**必须写在子命令之后**——写成 `<dir> <子命令>` 会直接报
+`invalid choice`。各子命令签名：
+
+```bash
+init --idea '...' [--domain D] [--root R]     # dir 由 --root + slug 推导
+check [--stage N] [--json] <dir>
+budget <dir>
+saturation <dir>
+consume <dir> --channel <ch> --queries N --results N --iterations N
+finalize <dir> --reason "..."
+merge <dir> --data '{...}'
+set-evidence <dir> <E-id> --data '{...}'      # 注意：E-id 在 dir 之后，不是之前
+```
+
+`consume` 两个坑：① 累加会**溢出即 FATAL 并拒绝落盘**（如 github 已 5/6 再 `--queries 5` 直接失败），
+单次调用请勿超过剩余额度；② `--iterations` 每次调用都会累加，一批 consume 只应有一个带 `--iterations`。
 
 ## Search Capabilities
 
@@ -79,7 +98,7 @@ product_search    # WebSearch (Product-Lite) + agent-browser 兜底
 `relevance < 0.6` 丢弃全部条目。写回：
 
 ```bash
-python3 scripts/validate_state.py <state-dir> set-evidence E1 --data '{"relevance":0.9}'
+python3 scripts/validate_state.py set-evidence <state-dir> E1 --data '{"relevance":0.9}'
 ```
 
 ## Budget

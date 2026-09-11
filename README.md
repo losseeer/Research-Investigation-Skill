@@ -159,3 +159,10 @@ Idea → Claims → 多通道搜索 → Evidence → 逐条裁决
 | 5 | Prior Art 比对 + 瓶颈分类 + Novelty 评级 |
 | 6 | 仅基于落盘状态生成报告，不掺入过程性记忆 |
 
+## TODO
+
+- [ ] 增加 quick / standard / deep profiles。
+- [ ] 增加时间、上下文和 Fetch 限制。
+- [ ] 实现 query 状态、去重和统一记账。
+- [ ] 实现自动 saturation 和 Evidence top-k 裁剪。
+- [ ] 优化网络重试、缓存并补充回归测试。

@@ -95,5 +95,5 @@
 ## 出口
 
 ```bash
-python3 scripts/validate_state.py <state-dir> check --stage 2
+python3 scripts/validate_state.py check <state-dir> --stage 2
 ```
