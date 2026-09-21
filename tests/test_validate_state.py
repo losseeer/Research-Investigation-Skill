@@ -123,10 +123,35 @@ class TestCrossCheck(unittest.TestCase):
             judgments=[{"claim_id": "C1", "status": "supported", "confidence": 0.8,
                         "rationale": "E1", "supporting_evidence_ids": ["E1"],
                         "contradicting_evidence_ids": []}],
+            search_plans=[{"claim_id": "C1", "queries": [
+                {"id": "Q1", "channel": "academic", "query": "example academic query", "status": "done",
+                 "result_count": 5},
+                {"id": "Q2", "channel": "academic", "query": "cites:W123123", "status": "done",
+                 "result_count": 2},
+            ]}],
         )
         errs, warns = self._run(state, [ev("E1", ["C1"])])
         self.assertEqual(errs, [])
         self.assertEqual(warns, [])
+
+    def test_hot_academic_without_citation_warns(self):
+        state = empty_state(
+            claims=[{"id": "C1", "statement": "x", "type": "technical", "importance": "high",
+                     "status": "supported", "confidence": 0.8, "evidence_ids": ["E1"]}],
+            search_plans=[{"claim_id": "C1", "queries": [
+                {"id": "Q1", "channel": "academic", "query": "example academic query", "status": "done",
+                 "result_count": 5},
+            ]}],
+        )
+        _, warns = self._run(state, [ev("E1", ["C1"])])
+        self.assertTrue(any("引文展开" in w for w in warns))
+
+    def test_cross_check_requires_executed_status_results(self):
+        state = empty_state(search_plans=[{"claim_id": "C1", "queries": [
+            {"id": "Q1", "channel": "github", "query": "x", "status": "done"},
+        ]}])
+        errs, _ = self._run(state, [])
+        self.assertTrue(any("result_count" in e for e in errs))
 
 
 class TestFinalize(unittest.TestCase):

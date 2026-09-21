@@ -66,6 +66,11 @@
       "type": "boolean",
       "description": "是否改变了对应 Claim 的判断，Evidence Saturation 的计数依据"
     },
+    "query_id": {
+      "type": "string",
+      "pattern": "^Q[0-9]+$",
+      "description": "产出该证据的检索 query id（search_plans 中的 Q id）。用于复盘时回溯「这条证据是从哪个 query 进入候选池的」。"
+    },
     "retrieved_at": { "type": "string" }
   }
 }

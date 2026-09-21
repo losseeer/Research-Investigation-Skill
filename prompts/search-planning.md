@@ -35,6 +35,13 @@
 同一 Claim 在不同通道的 query **必须是不同措辞**——同一个问题的学术叫法和工程叫法通常不一样，
 照搬等于浪费一次 query 额度。
 
+### 引文展开 query
+
+为每一个「已知或很可能存在高相关 seed」的 high Claim 预留 `academic` 通道的引文展开 query，
+形态为 `cites:<W-id>` / `referenced_works:<W-id>`（endpoint 见 `references/sources.md`）。seed 可从
+`idea.constraints` 里用户提供的已知论文、或阶段 3 归一化后 `relevance >= 0.8` 的证据涌现。
+引文展开不受关键词词表限制，命中「你预想不到对方社区怎么称呼这件事」的工作——这是关键词召回的盲区。
+
 ## 数量与额度
 
 - `importance == high`：≥3 条，且**至少跨 2 个通道**（门禁会卡）。
@@ -65,7 +72,8 @@
 ```
 
 - `id`：`Q1…Qn` **全局连续**，不重复（记账与去重按 id 追踪）。
-- `status`：一律 `pending`，执行后再改。
+- `status`：一律 `pending`，执行后在主循环用 `mark-query` 回写 `done / failed / skipped` 与 `result_count`。
+  不回写会让复查时无法证明该 query 是否真的跑过——这是硬规则，不是可选项。
 
 ## 示例
 

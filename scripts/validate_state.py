@@ -15,6 +15,7 @@ import argparse
 import json
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -258,6 +259,16 @@ def cross_check(state: dict, evidence: list, errors: list, warnings: list):
             if cid not in claim_ids:
                 errors.append(f"{e.get('id')}: claim_ids 引用了不存在的 {cid}")
 
+    # evidence.query_id 必须指向 search_plans 中真实存在且已执行的 Q（回写机制的可回溯性）
+    plan_q_ids = {q.get("id") for p in state.get("search_plans", []) for q in p.get("queries", [])}
+    for e in evidence:
+        qid = e.get("query_id")
+        if qid and qid not in plan_q_ids:
+            errors.append(f"{e.get('id')}: query_id {qid} 在 search_plans 中不存在")
+    for p in state.get("search_plans", []):
+        for q in p.get("queries", []):
+            if q.get("status") in ("done", "failed") and not q.get("result_count"):
+                errors.append(f"{q.get('id')}: status={q.get('status')} 但缺 result_count")
     for c in state.get("claims", []):
         for eid in c.get("evidence_ids", []):
             if eid not in ev_ids:
@@ -295,6 +306,21 @@ def cross_check(state: dict, evidence: list, errors: list, warnings: list):
         errors.append(f"budget: 全局 queries {total_q} 超过上限 {budget.get('max_queries')}")
     if budget.get("iterations", 0) > budget.get("max_iterations", 0):
         errors.append(f"budget: iterations 超过上限 {budget.get('max_iterations')}")
+
+    # 引文展开缺失告警：存在高相关学术证据却从未用 seed 论文反向追踪其引用/被引。
+    # 这是「关键词召回唯一入口」失败的典型信号——一个方向摸到高相关 seed 后须补 cites: 检索。
+    cit_forms = ("cites:", "referenced_works:", "cited_by:")
+    has_cit_query = any(
+        str(q.get("query", "")).startswith(cit_forms)
+        for p in state.get("search_plans", []) for q in p.get("queries", [])
+    )
+    has_hot_academic = any(
+        e.get("channel") == "academic" and e.get("relevance", 0) >= 0.8
+        for e in evidence
+    )
+    if has_hot_academic and not has_cit_query:
+        warnings.append("存在 relevance>=0.8 的学术证据但 search_plans 无引文展开(cites:)检索 —— "
+                        "建议对高相关 seed 补一次 citations / referenced_works 反向追踪")
 
     # 未裁决的 high claim 只提示，不阻断
     if state.get("status") in ("analyzed", "reported"):
@@ -372,6 +398,14 @@ def saturation_rows(state: dict, evidence: list):
         dup_rate = 0.0 if n == 0 else round(1 - len(set(urls)) / n, 3)
         rounds = state.get("saturation", {}).get(cid, {}).get("rounds_without_change", 0)
         stopped = state.get("saturation", {}).get(cid, {}).get("stopped", False)
+        # 低相关老文告警：某个方向出现一批 relevance 低、年份老的工作本身是信号——
+        # 说明该交叉方向历史悠久，通常会有近作，逐条结案(<0.6 排除)前应追问一次近年检索。
+        this_year = datetime.now().year
+        old_low = [
+            e for e in evs
+            if e.get("relevance", 1.0) < 0.6 and (e.get("publication_year") or 0) <= this_year - 8
+        ]
+        old_low_cnt = len(old_low)
         flags = []
         if independent >= 3:
             flags.append("independence>=3")
@@ -379,8 +413,12 @@ def saturation_rows(state: dict, evidence: list):
             flags.append("no_change>=2")
         if dup_rate > 0.6:
             flags.append("dup>0.6")
+        if old_low_cnt >= 2:
+            flags.append(f"old_low_rel>={old_low_cnt}")
         if stopped:
             flags.append("marked_stopped")
+        if old_low_cnt >= 2 and not stopped:
+            flags.append("ADVISE:query_recent_work")
         rows.append({
             "claim_id": cid,
             "evidence": n,
@@ -388,6 +426,7 @@ def saturation_rows(state: dict, evidence: list):
             "changes_judgment": sum(1 for e in evs if e.get("changes_judgment")),
             "duplicate_rate": dup_rate,
             "rounds_without_change": rounds,
+            "old_low_rel": old_low_cnt,
             "saturated": bool(flags),
             "flags": flags,
         })
@@ -463,11 +502,39 @@ def cmd_saturation(args):
     state, _ = load_state(Path(args.dir))
     evidence, _bad = load_evidence(Path(args.dir))
     rows = saturation_rows(state, evidence)
-    print(f"{'claim':<8}{'ev':>4}{'indep':>7}{'chg':>5}{'dup':>7}{'rounds':>8}  flags")
+    print(f"{'claim':<8}{'ev':>4}{'indep':>7}{'chg':>5}{'dup':>7}{'oldLR':>7}{'rounds':>8}  flags")
     for r in rows:
         print(f"{r['claim_id']:<8}{r['evidence']:>4}{r['independent']:>7}{r['changes_judgment']:>5}"
-              f"{r['duplicate_rate']:>7}{r['rounds_without_change']:>8}  "
+              f"{r['duplicate_rate']:>7}{r['old_low_rel']:>7}{r['rounds_without_change']:>8}  "
               f"{'SATURATED ' if r['saturated'] else '-'}{','.join(r['flags'])}")
+    return 0
+
+
+def cmd_mark_query(args):
+    """执行后回写 search_plans 中某条 query 的状态。
+
+    诊断复盘发现过这类故障：query 全部停在 `pending`，导致「执行状态从未回写」、
+    「无法证明某条 query 到底跑没跑」。执行完每条 query 必须 mark，历史可回溯。
+    """
+    state_dir = Path(args.dir)
+    state, path = load_state(state_dir)
+    hit = False
+    for p in state.get("search_plans", []):
+        for q in p.get("queries", []):
+            if q.get("id") == args.id:
+                q["status"] = args.status
+                if args.result_count is not None:
+                    q["result_count"] = args.result_count
+                hit = True
+    if not hit:
+        sys.exit(f"FATAL: search_plans 中不存在 query {args.id}")
+    errs = Validator(SCHEMA_DIR).validate(state, Validator(SCHEMA_DIR).load("research-state.json"))
+    if errs:
+        for e in errs:
+            print(f"ERROR: {e}")
+        return 1
+    save_state(path, state)
+    print(f"{args.id} -> {args.status}" + (f" (result_count={args.result_count})" if args.result_count is not None else ""))
     return 0
 
 
@@ -674,6 +741,13 @@ def main():
     pm.add_argument("dir")
     pm.add_argument("--data", required=True, help="JSON 对象，如 '{\"judgments\":[{...}]}'")
     pm.set_defaults(func=cmd_merge)
+
+    pmq = sub.add_parser("mark-query", help="执行后回写某 query 的 status / result_count")
+    pmq.add_argument("dir")
+    pmq.add_argument("--id", required=True, help="search_plans 中的 Q id")
+    pmq.add_argument("--status", required=True, choices=["pending", "done", "failed", "skipped"])
+    pmq.add_argument("--result-count", type=int, default=None)
+    pmq.set_defaults(func=cmd_mark_query)
 
     args = p.parse_args()
     sys.exit(args.func(args))

@@ -90,6 +90,12 @@ web_search        # 内置 WebSearch + WebFetch
 product_search    # WebSearch (Product-Lite) + agent-browser 兜底
 ```
 
+**引文展开（citation / snowballing）——与关键词并列的必做入口**：一旦某个 academic 线索足够相关
+（`relevance >= 0.8`），**必须**用它作为 seed 做反向追踪——OpenAlex `cites:W…`（正向：谁引用它）
+与 `referenced_works`（反向：它引用了谁）。引文展开不受关键词词表限制，能命中「你预想不到别人会
+怎么称呼这件事」的工作；关键词召回的上限 ≈ 你预判「别人怎么称呼它」的能力，交叉点上这个上限天然很低，
+仅靠关键词会漏掉强相关工作。seed 论文在执行中涌现即可，无需等输入。
+
 网络：脚本内建回退链 `env proxy → 127.0.0.1:7897 → 标记该通道 unavailable`，不得假定默认代理可用。
 
 环境变量：`RESEARCH_MAILTO`（**OpenAlex 必填**，否则稳定 429）、`GITHUB_TOKEN`（可选，自动把 github 通道额度提到 20 query）。
@@ -124,6 +130,11 @@ python3 scripts/validate_state.py set-evidence <state-dir> E1 --data '{"relevanc
 3. 新增结果与已有结果归一化后重复率 > 60%。
 4. 主要 prior art 与技术路线已覆盖。
 
+**低相关老文告警（≠ 停止，而是追问）**：若某方向出现 ≥2 条 `relevance < 0.6` 且 `publication_year` 较早
+（≥8 年前）的证据，`saturation` 会打 `ADVISE:query_recent_work`。**不要逐条结案**——一批低相关老文本身是
+信号：说明该交叉方向历史悠久，而历史悠久的交叉方向通常有近作。此时应先补一次覆盖近年窗口的检索
+（关键词带年份约束 + 以高相关 seed 做引文展开），确认没有近作再停。
+
 **收口**：所有 `importance == high` 的 Claim 均已裁决 → 进入 Stage 5。
 
 完整循环与 Action 记法见 `workflows/investigation.md`。
@@ -136,6 +147,8 @@ python3 scripts/validate_state.py set-evidence <state-dir> E1 --data '{"relevanc
 4. `implementation_level` 逐级举证：`idea → paper → code → prototype → production → commercial_product`。论文存在 ≠ 有代码，有代码 ≠ 有产品，有产品 ≠ 已验证市场价值。
 5. Report 只由 `research-state.json` + `evidence.jsonl` 生成，不引入上下文中的临时信息。
 6. Evidence 全文不进上下文，只写 `evidence.jsonl`；单轮迭代最多 10 条摘要进入上下文。
+7. **检索执行状态必须回写**：每条 query 执行后用 `mark-query` 更新 `status`（done / failed / skipped）与 `result_count`，
+   否则复查时无法证明它到底跑没跑；每条 Evidence 记录 `query_id` 以回溯它从哪条 query 进入候选池。
 
 ## Resources
 
@@ -161,7 +174,7 @@ python3 scripts/validate_state.py set-evidence <state-dir> E1 --data '{"relevanc
 ### scripts/
 - `search_academic.py` — OpenAlex + Crossref（+arXiv）
 - `search_github.py` — GitHub Search API
-- `validate_state.py` — state 唯一读写入口：init / check（stage 门禁）/ budget / saturation / consume / set-evidence / **merge（Stage 4–6 写回）**
+- `validate_state.py` — state 唯一读写入口：init / check（stage 门禁）/ budget / saturation / consume / set-evidence / merge（Stage 4–6 写回）/ **mark-query（执行状态回写）**
 - `_common.py` — 网络层（代理回退 + 429 退避），被上面三个脚本共用
 
 ### schemas/

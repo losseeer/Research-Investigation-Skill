@@ -30,6 +30,21 @@ env 代理（端口每次会话都变，只能从 HTTPS_PROXY 读）
 
 额度不写死在脚本里，存在 `state.search_budget.by_channel` 的 `max_queries` / `max_results`。
 
+## 引文展开（citation / snowballing）
+
+与关键词并列的**必做**检索方式，走 `academic_search`（OpenAlex）。当某条学术证据 `relevance >= 0.8`
+（归一化后）时，必须用它作为 seed 反向追踪：
+
+| 方向 | 含义 | OpenAlex 实现 |
+|---|---|---|
+| 正向 | 谁引用了 seed（近作多在此侧，最常见漏检来源） | `filter=cites:<W-id>`，取返回的 works |
+| 反向 | seed 引用了谁（直接读 seed 的参考文献列表） | 读该 work 的 `referenced_works` 数组（work id 列表）再批量取数 |
+
+- 用一个 `cites:` query 占一条 academic 额度；反向追引用不额外计 query（读取而非检索）。
+- 命令写法与普通检索一致，query 字段写 `cites:W…` / `referenced_works:W…`，channel 仍记 `academic`。
+- 引文展开不受关键词词表限制，能命中「对方社区使用、你预想不到」的称呼（如同一方法在 ILP 圈叫
+  `learning answer sets`、在你的词表里叫 `NL→formal synthesis`）。
+
 ## 各源要点
 
 ### OpenAlex

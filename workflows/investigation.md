@@ -8,8 +8,9 @@ SKILL.md 给阶段索引，这份文件给**循环规则**：每一轮做什么�
 
 | Action | 做什么 | 前置 | 后置 |
 |---|---|---|---|
-| `search` | 取一条 `status == pending` 的 query 执行 | 该通道还有额度 | `check` + `budget` |
-| `normalize` | 校准刚取回的证据（`relevance` / `strength` / `claim_ids`） | 有新证据 | `check` |
+| `search` | 取一条 `status == pending` 的 query 执行 | 该通道还有额度 | `mark-query`（done/failed + result_count）→ `check` + `budget` |
+| `cite` | 对 `relevance >= 0.8` 的学术证据做引文展开（`cites:` / `referenced_works:`） | 有高相关 seed | `mark-query` → `check` |
+| `normalize` | 校准刚取回的证据（`relevance` / `strength` / `claim_ids` / `query_id`） | 有新证据 | `check` |
 | `verify` | 对某个 Claim 裁决 | 该 Claim 有 ≥1 条 `relevance >= 0.6` 的证据 | `check` |
 | `analyze` | 补 prior art / 可行性 | 所有 high Claim 已裁决 | `check --stage 5` |
 | `skip` | 主动放弃某 Claim（标 `insufficient_evidence`） | 预算不足或该方向明显无解 | `check` |
@@ -23,6 +24,8 @@ loop:
     if 所有 high Claim 已裁决 → break
     if 任一通道额度耗尽 或 iterations >= max_iterations → break
     pick action:
+        - saturation 有 ADVISE:query_recent_work → 补一次近年检索（见下）
+        - 有 `relevance >= 0.8` 的学术证据未做过引文展开 → cite
         - 有 pending query 且该 Claim 未饱和 → search
         - 有未归一化的新证据                 → normalize
         - 某 Claim 证据已够裁决              → verify
@@ -32,12 +35,26 @@ loop:
 finalize → analyze → report
 ```
 
-每轮结束执行：
+每轮结束执行（先回写本次 query 状态，再记账校验）：
 
 ```bash
+python3 scripts/validate_state.py mark-query <dir> --id Q5 --status done --result-count 6
 python3 scripts/validate_state.py consume <dir> --channel academic --iterations 1 --queries 0 --results 0
 python3 scripts/validate_state.py check <dir>
 ```
+
+**引文展开（`cite` action）**：任何一条归一化后 `relevance >= 0.8` 的学术证据，都要对它能做的引文展开。
+这是关键词之外的必做入口，不受词表限制。直接以 seed 的 OpenAlex work id 构造 query：
+
+```bash
+python3 scripts/search_academic.py --query "cites:W123456789" --state-dir <dir> --claim-ids C3
+python3 scripts/validate_state.py mark-query <dir> --id Q6 --status done --result-count 4
+```
+
+**低相关老文告警（即 query_recent_work）**：`saturation` 出现 `old_low_rel>=N` / `ADVISE:query_recent_work`
+时，**不要逐条结案**。一批低相关老文说明该交叉方向历史悠久、通常有近作。先补一次覆盖近年窗口的检索——
+给该方向的关键词 query 加年份下界（如 `from_publication_date:2018-…`），并对该方向的高相关 seed 做引文展开，
+确认确实没有近作，再到 `skip`。这是防止「关键词只召回老文、漏掉近作」的主动动作。
 
 ## 停止条件
 
@@ -59,9 +76,12 @@ python3 scripts/validate_state.py check <dir>
 
 ```bash
 python3 scripts/validate_state.py saturation <dir>
-# claim     ev  indep  chg    dup  rounds  flags
-# C3         9      8    1    0.0       0  SATURATED independence>=3
+# claim     ev  indep  chg    dup  oldLR  rounds  flags
+# C3         9      8    1    0.0      2       0  old_low_rel>=2,ADVISE:query_recent_work
 ```
+
+`oldLR` = 该方向 `relevance<0.6` 且 `publication_year` 较早（≥8 年前）的证据数；
+出现 `ADVISE:query_recent_work` 表示应先补近年检索，见上文「低相关老文告警」。
 
 ### 收口
 
