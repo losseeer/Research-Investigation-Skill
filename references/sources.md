@@ -52,6 +52,10 @@ env 代理（端口每次会话都变，只能从 HTTPS_PROXY 读）
 - **不带 `mailto` 稳定返回 429**；带任意邮箱即可进 polite pool。用环境变量 `RESEARCH_MAILTO` 设置。
 - 用 `filter=title_and_abstract.search:{q}`，**不要用 `search={q}`**：后者是全文本匹配，
   会混入只在参考文献里提过一次关键词的论文（实测混入过无关医学论文）。
+- **查询词控制在 2–4 个词**：`title_and_abstract.search` 是词项 AND，实测
+  `object rearrangement tidying robot`（4 词）返回 17 条，加到 6 词的
+  `object rearrangement tidying up robot cluttered scene` 直接返回 **0 条**。
+  写长了不是"更精确"，是空结果白扣一次额度。
 - `abstract_inverted_index` 是 `{词: [位置]}`，需还原语序（脚本已处理）。
 - 已收录 arXiv 预印本（实测 25 条结果中 3 条来自 arXiv），因此 arXiv 不可用时仍有覆盖。
 - ⚠️ **OpenAlex 会间歇性整段返回 HTTP 503（实测 2026-09-10 一轮：13 次调用中 5 次 503，

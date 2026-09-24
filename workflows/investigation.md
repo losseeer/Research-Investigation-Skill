@@ -43,6 +43,11 @@ python3 scripts/validate_state.py consume <dir> --channel academic --iterations 
 python3 scripts/validate_state.py check <dir>
 ```
 
+两个坑：① `check` 用 `not q.get("result_count")` 判定，所以 **0 条结果不能写 `done --result-count 0`**
+（会被判 "status=done 但缺 result_count"）。查到 0 条时标 `skipped`，并把「该 query 过窄返回 0 条」
+写进报告 §11 的覆盖缺口。② `merge` 对 `search_plans` 是按 id upsert，**删不掉条目**——
+要把计划压回通道额度以内，只能直接改 `research-state.json`（脚本过滤后 `save_state`）。
+
 **引文展开（`cite` action）**：任何一条归一化后 `relevance >= 0.8` 的学术证据，都要对它能做的引文展开。
 这是关键词之外的必做入口，不受词表限制。直接以 seed 的 OpenAlex work id 构造 query：
 

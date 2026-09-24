@@ -143,10 +143,16 @@ def from_arxiv(entry, claim_ids) -> dict:
 # 各源抓取
 # --------------------------------------------------------------------------
 def fetch_openalex(query, max_results, mailto):
-    # title_and_abstract.search 比 search= 精确得多：后者是全文本匹配，
-    # 会混入只在参考文献里提过一次关键词的论文。
+    # 引文展开：query 以 cites: / referenced_works: 开头时走引文 filter，
+    # 不能塞进 title_and_abstract.search（否则恒返回 0 条）。
+    if query.startswith(("cites:", "referenced_works:")):
+        filt = query
+    else:
+        # title_and_abstract.search 比 search= 精确得多：后者是全文本匹配，
+        # 会混入只在参考文献里提过一次关键词的论文。
+        filt = f"title_and_abstract.search:{query}"
     params = {
-        "filter": f"title_and_abstract.search:{query}",
+        "filter": filt,
         "per-page": min(max_results, 50),
         "select": "id,doi,display_name,publication_year,primary_location,cited_by_count,"
                   "authorships,abstract_inverted_index",
