@@ -44,7 +44,7 @@ research/<idea-slug>/
 
 | Stage | 做什么 | 读 | 退出校验 |
 |---|---|---|---|
-| 0 Init | 初始化 state、派生 `idea-slug` | `assets/research-state.template.json` | state 可创建 |
+| 0 Init | 初始化 state、派生 `idea-slug`、按 `--profile` 固化预算 | `assets/research-state.template.json`、`assets/budget-profiles.json` | state 可创建，记录了 `profile` 与饱和度阈值 |
 | 1 Decompose | Idea → 原子 Claim | `prompts/decompose.md` | ≥5 条 Claim，覆盖 ≥3 种 type |
 | 2 Search Planning | 每 Claim 生成多通道 query | `prompts/search-planning.md` | 每条 high Claim ≥3 条跨通道 query |
 | 3 Search | 取回结果 → 归一化 Evidence | `scripts/search_academic.py`、`scripts/search_github.py`、内置 WebSearch / WebFetch；`prompts/evidence-normalization.md` | 无非法 Evidence；URL 已去重 |
@@ -109,15 +109,22 @@ python3 scripts/validate_state.py set-evidence <state-dir> E1 --data '{"relevanc
 
 ## Budget
 
-| 通道 | max_queries | max_results |
-|---|---|---|
-| `academic_search` (OpenAlex + Crossref) | 8 | 50 |
-| `academic_search` (arXiv) | 4 | 30 |
-| `github_search` | 6（有 `GITHUB_TOKEN` 时 20） | 30 |
-| `web_search` | 8 | 30 |
-| `product_search` | 4 | 20 |
+额度由 `assets/budget-profiles.json` 定义三档，init 时经 `--profile` 选择性拷贝进 state：
 
-全局：`max_iterations: 8`、`max_queries: 30`。
+| 档位 | max_iterations | max_queries | academic | github | web | product | 饱和判据（独立证据 / 无变化轮数 / 重复率） |
+|---|---|---|---|---|---|---|---|
+| `quick` | 4 | 14 | 6 | 4 | 3 | 1 | 2 / 1 / 0.7 |
+| `standard` ⭐ 默认 | 8 | 30 | 12 | 6 | 8 | 4 | 3 / 2 / 0.6 |
+| `deep` | 14 | 55 | 24 | 12 | 14 | 6 | 4 / 3 / 0.5 |
+
+用户可在请求里指定档位（「快速看下」「深挖一下」）；未指定用 `standard`。
+
+```bash
+python3 scripts/validate_state.py profiles
+python3 scripts/validate_state.py init --idea "<idea>" --profile quick
+```
+
+**额度以 state 为准**：init 后即固化，改配置文件不影响已有调查。脚本不内置任何通道常量。
 
 ## Stop Rules
 
@@ -136,6 +143,23 @@ python3 scripts/validate_state.py set-evidence <state-dir> E1 --data '{"relevanc
 （关键词带年份约束 + 以高相关 seed 做引文展开），确认没有近作再停。
 
 **收口**：所有 `importance == high` 的 Claim 均已裁决 → 进入 Stage 5。
+
+`stop-check` 把上面四条判据**自动**落盘：已达饱和的 Claim 写入 `saturation[claim_id].stopped`，并给出 `CONTINUE` / `FINALIZE` 判决（优先级：high Claim 全裁决 > high Claim 全饱和 > 无可执行的 query > iterations 达上限）。
+
+```bash
+python3 scripts/validate_state.py stop-check research/<slug>
+python3 scripts/validate_state.py topk research/<slug> --claim C3 --k 8   # 本轮进上下文的证据
+```
+
+循环执行入口：
+
+```bash
+python3 scripts/validate_state.py next-query <dir>     # 挑下一条 pending 且还有额度的 query
+python3 scripts/validate_state.py mark-query <dir> --id Q3 --status done --result-count 12
+python3 scripts/validate_state.py stop-check <dir>     # 自动饱和判定 + CONTINUE/FINALIZE
+```
+
+**query 计数只有 `mark-query` 一个入口**：同一 Q 重复 mark 不重复计费，`by_channel[*].queries` 由 `search_budget.executed_queries` 收据派生（手写计数会被 `check` 判为 error）。检索脚本须带 `--query-id`；只给了 `--state-dir` 不给 `--query-id` 会被拒绝。
 
 完整循环与 Action 记法见 `workflows/investigation.md`。
 
@@ -168,13 +192,14 @@ python3 scripts/validate_state.py set-evidence <state-dir> E1 --data '{"relevanc
 - `sources.md` — 通道配置：抽象能力名 ↔ 端点 / 限额 / 回退链
 
 ### assets/
-- `research-state.template.json` — state 初始模板
+- `research-state.template.json` — state 初始模板（额度由 profile 覆盖）
+- `budget-profiles.json` — quick / standard / deep 三档预算与饱和判据
 - `report-template.md` — 14 节报告骨架
 
 ### scripts/
 - `search_academic.py` — OpenAlex + Crossref（+arXiv）
 - `search_github.py` — GitHub Search API
-- `validate_state.py` — state 唯一读写入口：init / check（stage 门禁）/ budget / saturation / consume / set-evidence / merge（Stage 4–6 写回）/ **mark-query（执行状态回写）**
+- `validate_state.py` — state 唯一读写入口：init（**--profile**）/ check（stage 门禁）/ budget / saturation / consume / set-evidence / **mark-query（query 计费唯一入口）** / merge（Stage 4–6 写回）/ finalize / profiles / next-query / stop-check / topk
 - `_common.py` — 网络层（代理回退 + 429 退避），被上面三个脚本共用
 
 ### schemas/

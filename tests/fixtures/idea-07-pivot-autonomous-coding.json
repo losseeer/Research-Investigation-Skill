@@ -1,0 +1,55 @@
+{
+  "id": "idea-07",
+  "title": "用 Agent 全自动从需求写出可合并 PR",
+  "raw": "做一个 AI 程序员，给一句需求就自动改代码、提 PR 并合并，全程不需要人插手。",
+  "domain": "dev/autonomous-coding",
+  "expect_pass": true, "expect_verdict": "PIVOT",
+  "claims": [
+    {"id": "C1", "statement": "研发团队确实希望减少重复性编码与提交工作", "type": "user_problem", "importance": "high", "status": "unknown", "confidence": 0.0},
+    {"id": "C2", "statement": "Agent 能在无人介入的前提下完成端到端开发任务并通过 CI", "type": "technical", "importance": "high", "status": "unknown", "confidence": 0.0},
+    {"id": "C3", "statement": "已有产品提供全自动软件任务交付能力", "type": "product", "importance": "high", "status": "unknown", "confidence": 0.0},
+    {"id": "C4", "statement": "本方案在技术上无根本性障碍，只是工程量问题", "type": "novelty", "importance": "high", "status": "unknown", "confidence": 0.0},
+    {"id": "C5", "statement": "在「生成 PR 草稿 + 自动补测试」这类受限子任务上，Agent 已被验证有效", "type": "technical", "importance": "high", "status": "unknown", "confidence": 0.0}
+  ],
+  "queries": {
+    "C1": ["web|developer survey repetitive coding tasks time", "web|研发 重复性工作 占比 调研", "product|ai coding assistant adoption"],
+    "C2": ["academic|SWE-bench resolved rate state of the art", "academic|autonomous software engineering agent benchmark", "github|autonomous coding agent"],
+    "C3": ["product|autonomous ai software engineer service", "web|AI 程序员 全自动 交付 产品", "product|ai agent pull request automation"],
+    "C4": ["academic|limits of llm autonomous software engineering", "web|autonomous coding agent failure analysis", "github|long horizon agent failure reproduction"],
+    "C5": ["github|ai pull request summary generator", "github|automated test generation agent", "academic|llm test generation effectiveness"]
+  },
+  "evidence": [
+    {"channel": "web", "source_type": "market", "title": "研发效能现状调研", "url": "https://example.com/dev-productivity-survey", "source": "example.com", "publication_year": 2025, "summary": "开发者大量时间消耗在重复性编码、修 FIXME 与跨仓改动上。", "evidence": "a large share of developer time goes to repetitive changes across repositories", "claim_ids": ["C1"], "relevance": 0.7, "strength": "medium", "implementation_level": "idea", "changes_judgment": true},
+    {"channel": "academic", "source_type": "academic", "title": "SWE-bench leaderboard 现状", "url": "https://example.com/swe-bench-leaderboard", "source": "example.com", "publication_year": 2025, "summary": "最强系统在真实 issue 修复上的解决率仍在低两位数到中低位区间。", "evidence": "top systems resolve approximately 20-50% of real GitHub issues depending on setting and scaffolding", "claim_ids": ["C2"], "relevance": 0.95, "strength": "high", "implementation_level": "paper", "changes_judgment": true},
+    {"channel": "academic", "source_type": "academic", "title": "自主软件 Agent 的失败模式分析", "url": "https://example.com/agent-failure-analysis", "source": "example.com", "publication_year": 2025, "summary": "长任务下 Agent 会出现目标漂移、依赖误装、破坏既有测试等问题。", "evidence": "agents frequently break existing tests or drift from the intended goal on long trajectories", "claim_ids": ["C2", "C4"], "relevance": 0.9, "strength": "high", "implementation_level": "paper", "changes_judgment": true},
+    {"channel": "product", "source_type": "product", "title": "AI 软件工程服务现状", "url": "https://example.com/autonomous-swe-service", "source": "example.com", "publication_year": 2025, "summary": "已有商业服务以「AI 软件工程师」形态提供任务到 PR 的自动化。", "evidence": "assign tasks to an AI software engineer that opens pull requests for review", "claim_ids": ["C3"], "relevance": 0.8, "strength": "medium", "implementation_level": "commercial_product", "changes_judgment": true},
+    {"channel": "github", "source_type": "github", "title": "PR 摘要 / 自动补测试类 Agent", "url": "https://example.com/pr-summary-test-agent", "source": "example.com", "publication_year": 2025, "summary": "受限子任务（PR 描述生成、测试补全）已有大量可用实现与产品。", "evidence": "generates pull request summaries and fills missing unit tests", "claim_ids": ["C5"], "relevance": 0.85, "strength": "high", "implementation_level": "production", "changes_judgment": true},
+    {"channel": "academic", "source_type": "academic", "title": "LLM 单元测试生成有效性研究", "url": "https://example.com/llm-testgen-study", "source": "example.com", "publication_year": 2024, "summary": "LLM 生成的单测在覆盖率与检出缺陷上接近人工水平。", "evidence": "LLM-generated tests achieve comparable coverage to developer-written tests", "claim_ids": ["C5"], "relevance": 0.85, "strength": "high", "implementation_level": "paper", "changes_judgment": true}
+  ],
+  "judgments": [
+    {"claim_id": "C1", "status": "supported", "confidence": 0.7, "rationale": "E1 表明重复性编码与跨仓改动确实消耗研发大量时间。", "supporting_evidence_ids": ["E1"], "contradicting_evidence_ids": [], "evidence_gaps": ""},
+    {"claim_id": "C2", "status": "contradicted", "confidence": 0.85, "rationale": "E2 显示最强系统只解决约 20–50% 的真实 issue；E3 进一步记录在长任务上的目标漂移与破坏既有测试。二者共同否定了「无人介入即可端到端通过 CI」这一假设。", "supporting_evidence_ids": [], "contradicting_evidence_ids": ["E2", "E3"], "evidence_gaps": "缺少按任务类型分层（如纯重构 vs 功能新增）的解决率数据"},
+    {"claim_id": "C3", "status": "supported", "confidence": 0.8, "rationale": "E4 表明已有产品以任务到 PR 的形态提供自动化，且明确要求人工 review。", "supporting_evidence_ids": ["E4"], "contradicting_evidence_ids": [], "evidence_gaps": ""},
+    {"claim_id": "C4", "status": "contradicted", "confidence": 0.8, "rationale": "E3 记录的失败模式属方法层面的能力限制而非工程量，因此瓶颈是 research 而非纯 engineering。", "supporting_evidence_ids": [], "contradicting_evidence_ids": ["E3"], "evidence_gaps": ""},
+    {"claim_id": "C5", "status": "supported", "confidence": 0.85, "rationale": "E5/E6 表明 PR 摘要生成与测试补全这类受限子任务已有可用实现且效果接近人工。", "supporting_evidence_ids": ["E5", "E6"], "contradicting_evidence_ids": [], "evidence_gaps": ""}
+  ],
+  "prior_art": [
+    {"id": "P1", "title": "SWE-bench 体系下的自主修复 agent", "url": "https://example.com/swe-bench-leaderboard", "kind": "academic", "similarity": "highly_similar", "dimension": "problem", "difference": "目标同为「从需求/issue 到补丁」，但公开评测显示端到端成功率不足，已有工作普遍保留人类 review 环节。", "evidence_ids": ["E2"]},
+    {"id": "P2", "title": "AI 软件工程师类商业服务", "url": "https://example.com/autonomous-swe-service", "kind": "product", "similarity": "adjacent", "dimension": "system", "difference": "这些产品的形态是「开 PR 交给人审」，而不是「自动合并」，两者在评估与信任模型上不同。", "evidence_ids": ["E4"]},
+    {"id": "P3", "title": "PR 摘要 / 测试生成工具", "url": "https://example.com/pr-summary-test-agent", "kind": "implementation", "similarity": "identical", "dimension": "evaluation", "difference": "在受限子任务上已成主流做法，可直接复用。", "evidence_ids": ["E5", "E6"]}
+  ],
+  "analysis": {
+    "motivation": {"problem": "研发被重复性编码与跨仓改动占满", "who_cares": "研发团队与工程负责人", "value": "压缩重复劳动时间", "assessment": "strong"},
+    "bottlenecks": [
+      {"id": "B1", "description": "长任务目标漂移与回归破坏，属 Agent 能力边界问题", "bottleneck_type": "research", "severity": "high", "evidence_ids": ["E2", "E3"]},
+      {"id": "B2", "description": "缺 trust model：无人工确认的自动合并在任何现有产品中都不可见", "bottleneck_type": "fundamental", "severity": "high", "evidence_ids": ["E4"]}
+    ],
+    "novelty": {"level": "none", "because": "P1 problem 维度 highly_similar 且评测结果直接否定 C2；P3 在 evaluation 维度 identical；P2 形态 adjacent 但已覆盖「任务到 PR」链路。", "based_on_prior_art_ids": ["P1", "P2", "P3"]}
+  },
+  "recommendation": {
+    "verdict": "PIVOT",
+    "rationale": "原方向（需求 → 无人介入 → 自动合并）被 C2/C4 直接反驳：端到端成功率不足且失败模式属能力边界问题。但 C5 被强证据支持——受限于人工 review 之前的子任务（PR 草稿、测试补全）已验证有效。相邻机会成立：从「AI 程序员」转为「人审介入前的开发副驾」。",
+    "based_on_claim_ids": ["C2", "C3", "C4", "C5"],
+    "conditions": ["只在规范清晰、作用域受限的子任务上自动化（PR 摘要、补测、跨仓批量重构）", "保留人工 review 作为强制环节，不提供自动合并", "先按任务类型做分层评测，再决定是否扩任务范围"]
+  }
+}

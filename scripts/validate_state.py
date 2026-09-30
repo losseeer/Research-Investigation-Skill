@@ -4,7 +4,8 @@
 stdlib only，零依赖。所有额度从 state 自身读取，脚本内不内置通道常量。
 
 用法:
-    validate_state.py init --idea "<idea 文本>" [--root research]
+    validate_state.py profiles
+    validate_state.py init --idea "<idea 文本>" [--root research] [--profile quick|standard|deep]
     validate_state.py check <state-dir> [--stage N] [--json]
     validate_state.py budget <state-dir>
     validate_state.py saturation <state-dir>
@@ -24,7 +25,53 @@ from _common import now_iso
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_DIR = SKILL_ROOT / "schemas"
 TEMPLATE = SKILL_ROOT / "assets" / "research-state.template.json"
+PROFILES = SKILL_ROOT / "assets" / "budget-profiles.json"
 CHANNELS = ("academic", "github", "web", "product")
+PROFILE_NAMES = ("quick", "standard", "deep")
+# 老 state（profile 字段写入之前建的）没有 saturation 阈值时的兜底值，
+# 与 standard 档一致。用到时必须显式提示，不允许静默降级。
+SATURATION_DEFAULTS = {"min_independent": 3, "max_rounds_without_change": 2, "duplicate_rate": 0.6}
+
+
+def load_profiles():
+    """读取三档预算定义。文件缺失或结构不对一律显式报错，不做静默回退。"""
+    if not PROFILES.exists():
+        sys.exit(f"FATAL: 预算档位定义缺失 {PROFILES}")
+    with open(PROFILES, encoding="utf-8") as f:
+        cfg = json.load(f)
+    profiles = cfg.get("profiles")
+    if not isinstance(profiles, dict) or not profiles:
+        sys.exit(f"FATAL: {PROFILES} 缺少有效的 profiles 字段")
+    missing = [n for n in PROFILE_NAMES if n not in profiles]
+    if missing:
+        sys.exit(f"FATAL: {PROFILES} 缺少 profile: {', '.join(missing)}")
+    return cfg
+
+
+def apply_profile(state: dict, name: str):
+    """把某档位拷贝进 state.search_budget。额度以 state 为准，不再外部查找。"""
+    cfg = load_profiles()
+    if name not in cfg["profiles"]:
+        sys.exit(f"FATAL: 未知档位 {name}，可选: {', '.join(sorted(cfg['profiles']))}")
+    prof = cfg["profiles"][name]
+    b = state["search_budget"]
+    b["profile"] = name
+    b["max_iterations"] = prof["max_iterations"]
+    b["max_queries"] = prof["max_queries"]
+    b["saturation"] = dict(prof["saturation"])
+    for ch in CHANNELS:
+        b["by_channel"].setdefault(ch, {"max_queries": 0, "max_results": 0,
+                                        "queries": 0, "results": 0})
+        b["by_channel"][ch]["max_queries"] = prof["by_channel"][ch]["max_queries"]
+        b["by_channel"][ch]["max_results"] = prof["by_channel"][ch]["max_results"]
+
+
+def saturation_thresholds(state: dict):
+    """返回 (thresholds, from_profile)。老 state 没有该字段时给出兜底并标记来源。"""
+    st = state.get("search_budget", {}).get("saturation")
+    if isinstance(st, dict) and st:
+        return {**SATURATION_DEFAULTS, **st}, True
+    return dict(SATURATION_DEFAULTS), False
 
 
 # --------------------------------------------------------------------------
@@ -160,20 +207,130 @@ def normalize_url(url: str) -> str:
     return f"{host}{path}" + (f"?{query}" if query else "")
 
 
+def _query_channel(state: dict, qid: str):
+    """某 Q id 在 search_plans 中归属的通道；找不到返回 None。"""
+    for p in state.get("search_plans", []):
+        for q in p.get("queries", []):
+            if q.get("id") == qid:
+                return q.get("channel")
+    return None
+
+
+def derived_query_counts(state: dict) -> dict:
+    """从 executed_queries 收据派生每通道的 query 计数。"""
+    counts = {ch: 0 for ch in CHANNELS}
+    for qid in state.get("search_budget", {}).get("executed_queries", []):
+        ch = _query_channel(state, qid)
+        if ch in counts:
+            counts[ch] += 1
+        else:
+            counts[ch] = counts.get(ch, 0) + 1
+    return counts
+
+
+def sync_budget(state: dict):
+    """把 by_channel[*].queries 与 used.queries 重算为 executed_queries 的派生值。
+
+    query 计数的唯一真源是收据数组；任何手写/PDB 改出来的计数都会在落盘前被覆盖，
+    不可能出现「计数器与执行记录不一致」。
+    """
+    b = state.setdefault("search_budget", {})
+    by_ch = b.setdefault("by_channel", {})
+    counts = derived_query_counts(state)
+    for ch in CHANNELS:
+        by_ch.setdefault(ch, {"max_queries": 0, "max_results": 0, "queries": 0, "results": 0})
+    for ch, cur in by_ch.items():
+        cur["queries"] = counts.get(ch, 0)
+    used = b.setdefault("used", {"queries": 0, "results": 0})
+    used["queries"] = sum(c.get("queries", 0) for c in by_ch.values())
+    used["results"] = sum(c.get("results", 0) for c in by_ch.values())
+    return b
+
+
+def charge_query(state: dict, qid: str) -> bool:
+    """把一条 query 计一次费。同一 Q 重复调用不重复计费（幂等）。
+
+    超出该通道 query 上限时抛 ValueError。返回 True 表示本次真的计了费。
+    """
+    receipts = state.setdefault("search_budget", {}).setdefault("executed_queries", [])
+    if qid in receipts:
+        return False
+    ch = _query_channel(state, qid)
+    if ch is None:
+        raise ValueError(f"{qid}: search_plans 中不存在，拒绝计费")
+    if ch not in CHANNELS:
+        raise ValueError(f"{qid}: channel {ch} 非法")
+    # 先用「计费后」的值判超限，避免先把收据写进去再回滚
+    would_be = derived_query_counts(state).get(ch, 0) + 1
+    cap = state["search_budget"].get("by_channel", {}).get(ch, {}).get("max_queries", 0)
+    if would_be > cap:
+        raise ValueError(f"{ch}: queries {would_be} 超过上限 {cap}（query {qid}）")
+    receipts.append(qid)
+    sync_budget(state)
+    return True
+
+
+def finish_query(state_dir, qid: str, status: str, result_count: int = None, charge: bool = True):
+    """结束一条 query：回写 status / result_count，并按通道计费一次。
+
+    status ∈ done|failed 时才计费；skipped / pending 不退不收。
+    返回 (channel, charged)。
+    """
+    state_dir = Path(state_dir)
+    state, path = load_state(state_dir)
+    found = None
+    for p in state.get("search_plans", []):
+        for q in p.get("queries", []):
+            if q.get("id") == qid:
+                found = q
+    if found is None:
+        sys.exit(f"FATAL: search_plans 中不存在 query {qid}")
+    found["status"] = status
+    if result_count is not None:
+        found["result_count"] = int(result_count)
+    charged = False
+    if charge and status in ("done", "failed"):
+        if found.get("result_count") is None:
+            sys.exit(f"FATAL: {qid} status={status} 必须同时给 result_count")
+        charged = charge_query(state, qid)
+    sync_budget(state)
+    save_state(path, state)
+    return found.get("channel"), charged
+
+
+def executable_queries(state: dict):
+    """还能执行的 query：status pending 且所属通道仍有 query 额度。"""
+    counts = derived_query_counts(state)
+    by_ch = state.get("search_budget", {}).get("by_channel", {})
+    out = []
+    for p in state.get("search_plans", []):
+        for q in p.get("queries", []):
+            if (q.get("status") or "pending") != "pending":
+                continue
+            ch = q.get("channel")
+            cap = by_ch.get(ch, {}).get("max_queries", 0)
+            if counts.get(ch, 0) < cap:
+                out.append((p.get("claim_id"), q))
+    return out
+
+
 def consume_budget(state_dir, channel: str, queries: int = 0, results: int = 0) -> dict:
-    """累加某通道消耗。超上限抛 ValueError，调用方负责转成通道不可用或中止。"""
+    """累加某通道消耗。results 走这里；**queries 只能由 charge_query 计费**。
+
+    超上限抛 ValueError，调用方负责转成通道不可用或中止。
+    """
     state, path = load_state(Path(state_dir))
     b = state.setdefault("search_budget", {}).setdefault("by_channel", {})
     cur = b.setdefault(channel, {"max_queries": 0, "max_results": 0, "queries": 0, "results": 0})
+    if queries:
+        raise ValueError("query 计数已改为按 executed_queries 收据派生，请改用 charge_query / mark-query")
     nq, nr = cur.get("queries", 0) + queries, cur.get("results", 0) + results
     if nq > cur.get("max_queries", 0):
         raise ValueError(f"{channel}: queries {nq} 超过上限 {cur.get('max_queries')}")
     if nr > cur.get("max_results", 0):
         raise ValueError(f"{channel}: results {nr} 超过上限 {cur.get('max_results')}")
-    cur["queries"], cur["results"] = nq, nr
-    used = state["search_budget"].setdefault("used", {"queries": 0, "results": 0})
-    used["queries"] = sum(c.get("queries", 0) for c in b.values())
-    used["results"] = sum(c.get("results", 0) for c in b.values())
+    cur["results"] = nr
+    sync_budget(state)
     save_state(path, state)
     return dict(cur)
 
@@ -192,12 +349,16 @@ def title_key(title: str) -> str:
     return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", (title or "").lower())[:80]
 
 
-def append_evidence(state_dir, items: list, channel: str, queries: int = 0):
-    """去重后追加到 evidence.jsonl，分配 E 编号并记账。
+def append_evidence(state_dir, items: list, channel: str, query_id: str = None):
+    """去重后追加到 evidence.jsonl，分配 E 编号并记 results 消耗。
 
     去重键 = 归一化 URL ∪ 归一化标题（命中任一即丢弃）。
-    返回 (added, skipped_urls)。不传 channel 则不记账。
+    **query 计数不由本函数负责**——调用方必须用 finish_query / mark-query 计费。
+    返回 (added, skipped)。
     """
+    if query_id:
+        for it in items:
+            it.setdefault("query_id", query_id)
     state_dir = Path(state_dir)
     existing, _ = load_evidence(state_dir)
     seen_url, seen_title = set(), set()
@@ -232,7 +393,7 @@ def append_evidence(state_dir, items: list, channel: str, queries: int = 0):
 
     if channel:
         # 先记账再落盘：额度不足时一条都不写，避免「有证据但没记消耗」
-        consume_budget(state_dir, channel, queries=queries, results=len(added))
+        consume_budget(state_dir, channel, results=len(added))
     if added:
         with open(state_dir / "evidence.jsonl", "a", encoding="utf-8") as f:
             for it in added:
@@ -269,6 +430,20 @@ def cross_check(state: dict, evidence: list, errors: list, warnings: list):
         for q in p.get("queries", []):
             if q.get("status") in ("done", "failed") and not q.get("result_count"):
                 errors.append(f"{q.get('id')}: status={q.get('status')} 但缺 result_count")
+    # query 记账：收据 → 派生计数，双向一致
+    plan_map = {q.get("id"): q for p in state.get("search_plans", []) for q in p.get("queries", [])}
+    for qid in state.get("search_budget", {}).get("executed_queries", []):
+        if qid not in plan_map:
+            errors.append(f"budget.executed_queries: {qid} 在 search_plans 中不存在")
+    derived = derived_query_counts(state)
+    for ch, expect in derived.items():
+        got = state.get("search_budget", {}).get("by_channel", {}).get(ch, {}).get("queries")
+        if got is not None and got != expect:
+            errors.append(f"budget.{ch}: queries={got} 与收据派生值 {expect} 不一致（禁止手写计数）")
+    for qid, q in plan_map.items():
+        if q.get("status") in ("done", "failed") and \
+                qid not in state.get("search_budget", {}).get("executed_queries", []):
+            warnings.append(f"{qid}: status={q.get('status')} 但未计费（走 mark-query 才会记账）")
     for c in state.get("claims", []):
         for eid in c.get("evidence_ids", []):
             if eid not in ev_ids:
@@ -384,7 +559,11 @@ def check_stage(state: dict, stage: int, errors: list):
 # --------------------------------------------------------------------------
 # saturation
 # --------------------------------------------------------------------------
-def saturation_rows(state: dict, evidence: list):
+def saturation_rows(state: dict, evidence: list, th=None):
+    th = th or dict(SATURATION_DEFAULTS)
+    min_ind = th["min_independent"]
+    max_rounds = th["max_rounds_without_change"]
+    dup_th = th["duplicate_rate"]
     rows = []
     for c in state.get("claims", []):
         cid = c["id"]
@@ -407,12 +586,12 @@ def saturation_rows(state: dict, evidence: list):
         ]
         old_low_cnt = len(old_low)
         flags = []
-        if independent >= 3:
-            flags.append("independence>=3")
-        if rounds >= 2:
-            flags.append("no_change>=2")
-        if dup_rate > 0.6:
-            flags.append("dup>0.6")
+        if independent >= min_ind:
+            flags.append(f"independence>={min_ind}")
+        if rounds >= max_rounds:
+            flags.append(f"no_change>={max_rounds}")
+        if dup_rate > dup_th:
+            flags.append(f"dup>{dup_th}")
         if old_low_cnt >= 2:
             flags.append(f"old_low_rel>={old_low_cnt}")
         if stopped:
@@ -444,12 +623,33 @@ def cmd_init(args):
     state_dir.mkdir(parents=True, exist_ok=True)
     with open(TEMPLATE, encoding="utf-8") as f:
         state = json.load(f)
+    name = args.profile or load_profiles().get("default", "standard")
+    apply_profile(state, name)
     state["idea"] = {"title": title, "raw": args.idea, "slug": slug, "domain": args.domain or "",
                      "constraints": []}
     state["created_at"] = now_iso()
     save_state(state_dir / "research-state.json", state)
     (state_dir / "evidence.jsonl").touch()
     print(str(state_dir))
+
+
+def cmd_profiles(args):
+    cfg = load_profiles()
+    default = cfg.get("default", "standard")
+    print(f"{'profile':<10}{'iter':>5}{'queries':>8}  by_channel (q/r)"
+          f"{'':>4}saturation (indep/rounds/dup)")
+    for name in PROFILE_NAMES:
+        p = cfg["profiles"][name]
+        chans = "  ".join(f"{ch[:4]}{p['by_channel'][ch]['max_queries']}/"
+                          f"{p['by_channel'][ch]['max_results']}" for ch in CHANNELS)
+        s = p["saturation"]
+        mark = "*" if name == default else " "
+        print(f"{name + mark:<10}{p['max_iterations']:>5}{p['max_queries']:>8}  {chans}  "
+              f"{s['min_independent']}/{s['max_rounds_without_change']}/{s['duplicate_rate']}")
+    print(f"\n* = default（init 不带 --profile 时使用）")
+    for name in PROFILE_NAMES:
+        print(f"  {name}: {cfg['profiles'][name]['description']}")
+    return 0
 
 
 def cmd_check(args):
@@ -501,7 +701,12 @@ def cmd_budget(args):
 def cmd_saturation(args):
     state, _ = load_state(Path(args.dir))
     evidence, _bad = load_evidence(Path(args.dir))
-    rows = saturation_rows(state, evidence)
+    th, from_profile = saturation_thresholds(state)
+    if not from_profile:
+        print(f"NOTE: state 未记录 saturation 阈值（profile 字段缺失），"
+              f"按默认判据判定: independent>={th['min_independent']} "
+              f"no_change>={th['max_rounds_without_change']} dup>{th['duplicate_rate']}")
+    rows = saturation_rows(state, evidence, th)
     print(f"{'claim':<8}{'ev':>4}{'indep':>7}{'chg':>5}{'dup':>7}{'oldLR':>7}{'rounds':>8}  flags")
     for r in rows:
         print(f"{r['claim_id']:<8}{r['evidence']:>4}{r['independent']:>7}{r['changes_judgment']:>5}"
@@ -511,30 +716,40 @@ def cmd_saturation(args):
 
 
 def cmd_mark_query(args):
-    """执行后回写 search_plans 中某条 query 的状态。
+    """执行后回写某条 query 的状态，并按所属通道计费一次。
 
-    诊断复盘发现过这类故障：query 全部停在 `pending`，导致「执行状态从未回写」、
-    「无法证明某条 query 到底跑没跑」。执行完每条 query 必须 mark，历史可回溯。
+    这是 query 计数的**唯一入口**：同一 Q 重复 mark 不重复计费（幂等），
+    执行失败同样留下收据——「配额花在哪条 query 上」全程可回溯。
+    诊断复盘发现过这类故障：query 全部停在 `pending`，无法证明到底跑没跑。
     """
-    state_dir = Path(args.dir)
-    state, path = load_state(state_dir)
-    hit = False
-    for p in state.get("search_plans", []):
-        for q in p.get("queries", []):
-            if q.get("id") == args.id:
-                q["status"] = args.status
-                if args.result_count is not None:
-                    q["result_count"] = args.result_count
-                hit = True
-    if not hit:
-        sys.exit(f"FATAL: search_plans 中不存在 query {args.id}")
-    errs = Validator(SCHEMA_DIR).validate(state, Validator(SCHEMA_DIR).load("research-state.json"))
-    if errs:
-        for e in errs:
-            print(f"ERROR: {e}")
+    try:
+        ch, charged = finish_query(args.dir, args.id, args.status, args.result_count)
+    except ValueError as e:
+        sys.exit(f"FATAL: {e}")
+    print(f"{args.id} -> {args.status} channel={ch} "
+          f"{'[charged]' if charged else '[already-charged]'}"
+          + (f" result_count={args.result_count}" if args.result_count is not None else ""))
+    return 0
+
+
+def cmd_next_query(args):
+    """挑下一条可执行的 query：pending 且所属通道还有 query 额度。"""
+    state, _path = load_state(Path(args.dir))
+    pend = executable_queries(state)
+    if args.channel:
+        pend = [(cid, q) for cid, q in pend if q.get("channel") == args.channel]
+    if not pend:
+        print("NO_EXECUTABLE_QUERY: 没有 pending query，或涉及通道的 query 额度已耗尽")
         return 1
-    save_state(path, state)
-    print(f"{args.id} -> {args.status}" + (f" (result_count={args.result_count})" if args.result_count is not None else ""))
+    cid, q = pend[0]
+    counts = derived_query_counts(state)
+    cap = state.get("search_budget", {}).get("by_channel", {}).get(q["channel"], {}).get("max_queries", 0)
+    print(f"{q['id']}  claim={cid}  channel={q['channel']}  "
+          f"budget={counts.get(q['channel'], 0)}/{cap}")
+    if args.json:
+        print(json.dumps({"claim_id": cid, **q}, ensure_ascii=False))
+    else:
+        print(q["query"])
     return 0
 
 
@@ -591,6 +806,7 @@ def cmd_merge(args):
         for e in errs:
             print(f"ERROR: {e}")
         return 1
+    sync_budget(state)  # merge 可能带入 search_plans，重算派生计数防漂移
     save_state(path, state)
     print(f"merged: {sorted(patch)}")
     return 0
@@ -673,6 +889,102 @@ def cmd_finalize(args):
     return 0
 
 
+MAX_CONTEXT_EVIDENCE = 10  # SKILL.md Hard Rules：单轮迭代最多 10 条证据摘要进上下文
+
+
+def cmd_stop_check(args):
+    """自动 Evidence Saturation：把已达饱和判据的 Claim 落盘为 stopped，并给出循环判决。
+
+    判决优先级：
+      1. 所有 importance=high 的 Claim 已裁决              → FINALIZE
+      2. 所有 high Claim 均已饱和（stopped）                → FINALIZE
+      3. 无可执行的 query（额度耗尽或没有 pending）          → FINALIZE
+      4. iterations >= max_iterations                       → FINALIZE
+      否则 CONTINUE，并给出下一步建议。
+    """
+    state_dir = Path(args.dir)
+    state, path = load_state(state_dir)
+    evidence, _bad = load_evidence(state_dir)
+    th, from_profile = saturation_thresholds(state)
+    rows = saturation_rows(state, evidence, th)
+
+    by_id = {r["claim_id"]: r for r in rows}
+    sat = state.setdefault("saturation", {})
+    newly = []
+    for c in state.get("claims", []):
+        cid = c["id"]
+        r = by_id.get(cid)
+        if r and r["saturated"] and not sat.get(cid, {}).get("stopped"):
+            entry = sat.setdefault(cid, {"rounds_without_change": 0})
+            entry["stopped"] = True
+            entry["reason"] = ",".join(r["flags"])
+            newly.append(cid)
+
+    high = [c for c in state.get("claims", []) if c.get("importance") == "high"]
+    judged = {j.get("claim_id") for j in state.get("judgments", [])}
+    need = [c["id"] for c in high if c["id"] not in judged]
+    pend = executable_queries(state)
+    iters = state.get("search_budget", {}).get("iterations", 0)
+    max_iters = state.get("search_budget", {}).get("max_iterations", 0)
+
+    if high and not need:
+        verdict, reason = "FINALIZE", "所有 high Claim 已裁决"
+    elif high and all(sat.get(c["id"], {}).get("stopped") for c in high):
+        verdict, reason = "FINALIZE", "所有 high Claim 已达证据饱和"
+    elif not pend:
+        verdict, reason = "FINALIZE", "无可执行的 query（额度耗尽或无 pending）"
+    elif max_iters and iters >= max_iters:
+        verdict, reason = "FINALIZE", f"iterations {iters} 已达上限 {max_iters}"
+    else:
+        verdict = "CONTINUE"
+        if newly:
+            reason = f"本次新饱和 {', '.join(newly)}；仍有 {len(pend)} 条可执行 query"
+        else:
+            reason = f"仍有 {len(pend)} 条可执行 query，未裁决 high Claim: {', '.join(need) or '无'}"
+
+    save_state(path, state)
+
+    if args.json:
+        print(json.dumps({"verdict": verdict, "reason": reason, "newly_stopped": newly,
+                          "executable_queries": [q["id"] for _c, q in pend],
+                          "rows": rows}, ensure_ascii=False, indent=2))
+    else:
+        if not from_profile:
+            print(f"NOTE: state 未记录 saturation 阈值，按默认判据判定 "
+                  f"(indep>={th['min_independent']} rounds>={th['max_rounds_without_change']} "
+                  f"dup>{th['duplicate_rate']})")
+        for r in rows:
+            print(f"{r['claim_id']:<8}{'ev':>0}={r['evidence']:<3} "
+                  f"{'STOPPED' if sat.get(r['claim_id'], {}).get('stopped') else '-':<8}"
+                  f"{','.join(r['flags']) or '(未饱和)'}")
+        print(f"\n{verdict}: {reason}")
+    return 0
+
+
+def cmd_topk(args):
+    """Evidence top-k 裁剪：按 relevance 取前 k 条，供本轮进上下文（受 ≤10 条约束）。"""
+    if args.k > MAX_CONTEXT_EVIDENCE:
+        sys.exit(f"FATAL: k={args.k} 超过单轮上下文上限 {MAX_CONTEXT_EVIDENCE}")
+    state, _path = load_state(Path(args.dir))
+    evidence, _bad = load_evidence(Path(args.dir))
+    rows = [e for e in evidence
+            if not args.claim or args.claim in e.get("claim_ids", [])]
+    rows = [e for e in rows if e.get("relevance", 0) >= args.min_relevance]
+    rows.sort(key=lambda e: (-e.get("relevance", 0), -int(e.get("publication_year") or 0)))
+    picked = rows[:args.k]
+    print(f"# {len(picked)}/{len(rows)} selected"
+          + (f"  (claim={args.claim})" if args.claim else "")
+          + f"  relevance>={args.min_relevance}  k={args.k}")
+    for e in picked:
+        print(f"{e['id']}  rel={e.get('relevance')}  {e.get('strength','-')}/"
+              f"{e.get('implementation_level','-')}  {e.get('source_type','-')}  "
+              f"{str(e.get('title',''))[:56]}")
+    dropped = len(rows) - len(picked)
+    if dropped:
+        print(f"# {dropped} 条被裁剪（未进上下文，仍在 evidence.jsonl 中可回溯）")
+    return 0
+
+
 def cmd_consume(args):
     try:
         cur = consume_budget(Path(args.dir), args.channel, args.queries, args.results)
@@ -701,7 +1013,13 @@ def main():
     pi.add_argument("--idea", required=True)
     pi.add_argument("--domain", default="")
     pi.add_argument("--root", default="research")
+    pi.add_argument("--profile", default=None,
+                    help=f"预算档位，可选 {', '.join(PROFILE_NAMES)}；"
+                         f"不指定则用 budget-profiles.json 的 default")
     pi.set_defaults(func=cmd_init)
+
+    pp = sub.add_parser("profiles", help="列出可用预算档位及其额度")
+    pp.set_defaults(func=cmd_profiles)
 
     pc = sub.add_parser("check", help="schema + 交叉引用 + budget 校验")
     pc.add_argument("dir")
@@ -717,13 +1035,30 @@ def main():
     ps.add_argument("dir")
     ps.set_defaults(func=cmd_saturation)
 
-    pu = sub.add_parser("consume", help="记账：累加某通道的 query / result 消耗")
+    pu = sub.add_parser("consume", help="记账：累加某通道的 results 消耗（query 计数请用 mark-query）")
     pu.add_argument("dir")
     pu.add_argument("--channel", required=True, choices=CHANNELS)
-    pu.add_argument("--queries", type=int, default=0)
     pu.add_argument("--results", type=int, default=0)
     pu.add_argument("--iterations", type=int, default=0, help="主循环迭代计数（不指定 channel 语义时用）")
     pu.set_defaults(func=cmd_consume)
+
+    pn = sub.add_parser("next-query", help="挑下一条 pending 且所在通道仍有额度的 query")
+    pn.add_argument("dir")
+    pn.add_argument("--channel", choices=CHANNELS, default=None)
+    pn.add_argument("--json", action="store_true")
+    pn.set_defaults(func=cmd_next_query)
+
+    pk = sub.add_parser("stop-check", help="自动 Evidence Saturation：写回 stopped 并给出循环判决")
+    pk.add_argument("dir")
+    pk.add_argument("--json", action="store_true")
+    pk.set_defaults(func=cmd_stop_check)
+
+    pt = sub.add_parser("topk", help="Evidence top-k 裁剪（取 relevance 最高的 k 条进上下文）")
+    pt.add_argument("dir")
+    pt.add_argument("--claim", default=None, help="只看落在某个 Claim 上的证据")
+    pt.add_argument("--k", type=int, default=10)
+    pt.add_argument("--min-relevance", type=float, default=0.6)
+    pt.set_defaults(func=cmd_topk)
 
     pf = sub.add_parser("finalize", help="循环结束：未裁决 Claim 一律补 insufficient_evidence")
     pf.add_argument("dir")

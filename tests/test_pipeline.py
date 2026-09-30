@@ -43,6 +43,16 @@ def build_search_plans(queries: dict):
     return plans
 
 
+def plan_query_ids(queries: dict) -> dict:
+    """{"C1": ["web|xxx"]} → {channel: [Q 编号]}，Q 编号规则与 build_search_plans 一致。"""
+    out, n = {}, 0
+    for _claim_id, items in queries.items():
+        for raw in items:
+            n += 1
+            out.setdefault(raw.partition("|")[0], []).append(f"Q{n}")
+    return out
+
+
 class PipelineCase:
     def __init__(self, fixture_path: Path):
         self.fx = json.loads(fixture_path.read_text(encoding="utf-8"))
@@ -89,9 +99,14 @@ def run_positive(case: PipelineCase):
     by_channel = {}
     for e in fx["evidence"]:
         by_channel.setdefault(e["channel"], []).append(e)
+    # query 级记账：每个通道的取回结果挂到该通道第一条 planned query 上
+    plan_ids = plan_query_ids(fx["queries"])
     added_total = 0
     for channel, items in by_channel.items():
-        added, _ = vs.append_evidence(case.dir, items, channel, queries=1)
+        qid = (plan_ids.get(channel) or [None])[0]
+        added, _ = vs.append_evidence(case.dir, items, channel, query_id=qid)
+        if qid:
+            vs.finish_query(case.dir, qid, "done", len(added))
         added_total += len(added)
     assert added_total == len(fx["evidence"]), f"{case.name}: 证据应全部写入"
 
@@ -138,7 +153,7 @@ class TestFullPipeline(unittest.TestCase):
         return c
 
     def test_fixtures_loaded(self):
-        self.assertEqual(len(FIXTURES), 5, "应有 5 个 fixture")
+        self.assertEqual(len(FIXTURES), 7, "应有 7 个 fixture：01–04 正例路径 + 05 负例 + 06 MODIFY + 07 PIVOT")
 
     def test_positive_fixtures_run_to_report(self):
         for path in FIXTURES:
@@ -152,6 +167,31 @@ class TestFullPipeline(unittest.TestCase):
                 # 所有 Claim 都必须有裁决（finalize 兜底后不应有遗漏）
                 judged = {j["claim_id"] for j in state["judgments"]}
                 self.assertEqual(judged, {c["id"] for c in state["claims"]})
+
+    def test_modify_fixture_comes_from_partially_supported(self):
+        """MODIFY 的语义锚点：high Claim 部分成立 + 非空 conditions，且没有 high Claim 被 contradicted。"""
+        path = next(p for p in FIXTURES
+                    if json.loads(p.read_text(encoding="utf-8"))["id"] == "idea-06")
+        fx = json.loads(path.read_text(encoding="utf-8"))
+        state = run_positive(self._case(path))
+        self.assertEqual(state["recommendation"]["verdict"], "MODIFY")
+        self.assertTrue(state["recommendation"]["conditions"], "MODIFY 必须给出调整条件")
+        high_ids = {c["id"] for c in fx["claims"] if c["importance"] == "high"}
+        judged = {j["claim_id"]: j["status"] for j in state["judgments"]}
+        self.assertNotIn("contradicted", {judged[c] for c in high_ids})
+        self.assertIn("partially_supported", {judged[c] for c in high_ids})
+
+    def test_pivot_fixture_comes_from_contradicted_plus_adjacent(self):
+        """PIVOT 的语义锚点：核心 Claim 被反驳，同时相邻子任务的 Claim 被支持。"""
+        path = next(p for p in FIXTURES
+                    if json.loads(p.read_text(encoding="utf-8"))["id"] == "idea-07")
+        fx = json.loads(path.read_text(encoding="utf-8"))
+        state = run_positive(self._case(path))
+        self.assertEqual(state["recommendation"]["verdict"], "PIVOT")
+        judged = {j["claim_id"]: j["status"] for j in state["judgments"]}
+        self.assertEqual(judged["C2"], "contradicted")   # 原方向核心假设
+        self.assertEqual(judged["C5"], "supported")      # 相邻机会
+        self.assertTrue(state["recommendation"]["conditions"])
 
     def test_negative_fixture_rejected_by_gate(self):
         path = next(p for p in FIXTURES
@@ -187,15 +227,20 @@ class TestFullPipeline(unittest.TestCase):
         by_channel = {}
         for e in fx["evidence"]:
             by_channel.setdefault(e["channel"], []).append(e)
+        plan_ids = plan_query_ids(fx["queries"])
         for channel, items in by_channel.items():
-            vs.append_evidence(case.dir, items, channel, queries=1)
+            qid = (plan_ids.get(channel) or [None])[0]
+            added, _ = vs.append_evidence(case.dir, items, channel, query_id=qid)
+            if qid:
+                vs.finish_query(case.dir, qid, "done", len(added))
         rc, out = sh("budget", case.dir)
         self.assertEqual(rc, 0)
         rows = {l.split()[0]: l for l in out.splitlines()
                 if l.startswith(("academic", "github", "web", "product"))}
-        self.assertIn("1/12", rows["academic"], out)   # 3 条 academic 证据，1 次 query
-        self.assertIn("3/80", rows["academic"], out)
-        self.assertIn("1/6", rows["github"], out)      # 1 条 github 证据，1 次 query
+        # 计数来自 executed_queries 收据，不再是「调用时口头申报」
+        self.assertIn("1/12", rows["academic"], out)   # academic 执行了 1 条 query
+        self.assertIn("3/80", rows["academic"], out)   # 落 3 条证据
+        self.assertIn("1/6", rows["github"], out)      # github 执行了 1 条 query
         self.assertIn("0/8", rows["web"], out)         # web 通道未调用
 
 

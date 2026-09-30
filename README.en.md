@@ -32,7 +32,9 @@ Every conclusion in the report carries evidence IDs, so you can trace each one b
 - **Novelty rating** — Five levels from `none` to `breakthrough`, always with a justification that cites evidence — no "feels pretty novel" judgments.
 - **Feasibility analysis** — Technical bottlenecks are classified as engineering (solvable with effort) / research (method unproven, needs experiments) / fundamental (bounded by existing theory or capabilities), so you know what kind of difficulty you're facing.
 - **Maturity discrimination** — Distinguishes "there's a paper" from "there's code" from "there's a product" from "the market validated it." A paper existing ≠ the technology is mature; a demo never gets described as a production-ready solution.
-- **Budget control & forced closure** — Every search channel has a query cap, and evidence saturation stops a line of investigation automatically. When the budget runs out, the report is still produced — with undecidable claims honestly marked, never force-fitted.
+- **Per-query accounting** — Every search is tied to a specific `Q` in `search_plans`; budget counts are derived from execution receipts, and re-running the same query is never charged twice. Hand-written per-channel counters are rejected, so every unit of budget stays traceable to a query.
+- **Budget profiles** — `quick` / `standard` / `deep`, controlling both the search caps and the saturation thresholds (see Quick Start step 4).
+- **Automatic closure** — `stop-check` applies the profile thresholds, marks saturated Claims as stopped, and issues a CONTINUE / FINALIZE verdict; `topk` trims the evidence admitted into context this round (≤10 items). When the budget runs out, the report is still produced — with undecidable claims honestly marked, never force-fitted.
 - **14-section research report** — From executive summary, claim list, and existing-work review to bottleneck analysis, risk disclosure, and recommended next steps — ready to present as-is.
 
 ## Use Cases
@@ -108,16 +110,38 @@ export RESEARCH_MAILTO="you@example.com"   # Required by OpenAlex; without it yo
 export GITHUB_TOKEN="ghp_xxx"              # Optional; raises the GitHub query budget from 6 to 20
 ```
 
-### 4. Verify the installation (optional)
+### 4. Pick a budget profile (optional)
+
+Three profiles control how much search budget you are willing to spend:
 
 ```bash
-python3 tests/test_validate_state.py   # 28 checks: schema / budget / saturation / merge / finalize
-python3 tests/test_pipeline.py         # 5 checks: full offline pipeline regression
+python3 scripts/validate_state.py profiles
+```
+
+| Profile | max_iterations | max_queries | academic | github | web | product | Saturation (independent / silent rounds / dup rate) |
+|---|---|---|---|---|---|---|---|
+| `quick` | 4 | 14 | 6 | 4 | 3 | 1 | 2 / 1 / 0.7 |
+| `standard` ⭐ default | 8 | 30 | 12 | 6 | 8 | 4 | 3 / 2 / 0.6 |
+| `deep` | 14 | 55 | 24 | 12 | 14 | 6 | 4 / 3 / 0.5 |
+
+Just mention it in your request (e.g. "quick profile, only tell me whether this already exists"), or set it directly:
+
+```bash
+python3 scripts/validate_state.py init --idea "<idea>" --profile deep
+```
+
+Limits are **copied into the state at init time**, so later edits to the config file do not affect an existing investigation — re-init to switch profiles.
+
+### 5. Verify the installation (optional)
+
+```bash
+python3 tests/test_validate_state.py   # 48 checks: schema / budget / profiles / query accounting / auto-saturation / merge / finalize
+python3 tests/test_pipeline.py         # 7 checks: full offline pipeline regression (incl. MODIFY / PIVOT paths)
 ```
 
 Or more directly: start a small investigation in a fresh session (next step) and see whether it follows the decompose → gather → report flow.
 
-### 5. Start an investigation
+### 6. Start an investigation
 
 Describe your idea and your intent in the agent conversation:
 
@@ -130,7 +154,7 @@ people speak naturally and their expenses are recorded with monthly reports.
 
 The Skill takes over the whole pipeline: decompose claims → plan searches → gather evidence across channels → verify each claim → prior art / feasibility analysis → generate the report. All state is written to disk, so an interrupted run can be resumed.
 
-### 6. Read the results
+### 7. Read the results
 
 Output lands under `research/<idea-slug>/` in the current project:
 
@@ -161,8 +185,5 @@ Six stages (each stage exit is gated by automatic validation — failure blocks 
 
 ## TODO
 
-- [ ] Add quick / standard / deep profiles.
 - [ ] Add time, context, and fetch limits.
-- [ ] Implement query state, deduplication, and unified accounting.
-- [ ] Implement automatic saturation and top-k Evidence trimming.
 - [ ] Optimize retries and caching, and add regression tests.

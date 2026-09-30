@@ -37,6 +37,7 @@
     "max_iterations": 8,
     "max_queries": 30,
     "iterations": 0,
+    "executed_queries": [],
     "used": {
       "queries": 0,
       "results": 0

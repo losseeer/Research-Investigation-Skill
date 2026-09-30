@@ -2,6 +2,15 @@
 
 SKILL.md 给阶段索引，这份文件给**循环规则**：每一轮做什么、什么时候停、预算怎么花。
 
+## Budget Profile
+
+Stage 0 的 `init` 由 `--profile`（默认 `standard`）把三档之一固化进 state：额度 + **饱和判据阈值**
+（`independent` / `rounds_without_change` / `duplicate_rate`）一并写入 `search_budget.saturation`，
+之后所有停止判断只读 state，不再查配置文件。
+
+用户说「快速看下」「只要结论」「深挖一下」「写论文用」分别对应 `quick` / `standard` / `deep`；
+未明示时用 `standard`。换档要重新 init——进行中的调查不会因为改了配置文件而变额度。
+
 ## Action Space
 
 每一轮从下面选一个动作执行。动作本身由 Agent 判断，但**每个动作前后都要过一次 `validate_state.py`**。
@@ -21,27 +30,29 @@ SKILL.md 给阶段索引，这份文件给**循环规则**：每一轮做什么�
 ```text
 init → decompose → search-planning
 loop:
-    if 所有 high Claim 已裁决 → break
-    if 任一通道额度耗尽 或 iterations >= max_iterations → break
-    pick action:
-        - saturation 有 ADVISE:query_recent_work → 补一次近年检索（见下）
-        - 有 `relevance >= 0.8` 的学术证据未做过引文展开 → cite
-        - 有 pending query 且该 Claim 未饱和 → search
-        - 有未归一化的新证据                 → normalize
-        - 某 Claim 证据已够裁决              → verify
-        - 某 Claim 连续 2 轮无新增           → skip
+    verdict = stop-check                       # 先问机器要不要停
+    if verdict == FINALIZE → break
+    qid = next-query                           # 挑 pending 且通道还有额度的 Q
+    execute(qid) → mark-query --status done    # 唯一计费入口，幂等
     consume --iterations 1
     check
 finalize → analyze → report
 ```
 
-每轮结束执行（先回写本次 query 状态，再记账校验）：
+每轮结束执行（先回写本次 query 状态与结果数，再校验）：
 
 ```bash
 python3 scripts/validate_state.py mark-query <dir> --id Q5 --status done --result-count 6
-python3 scripts/validate_state.py consume <dir> --channel academic --iterations 1 --queries 0 --results 0
+python3 scripts/validate_state.py consume <dir> --channel academic --iterations 1
 python3 scripts/validate_state.py check <dir>
 ```
+
+**「一轮到底改了什么」必须能在 state 里读出来**，所以：
+
+- query 计数只有 `mark-query` 一个入口（`executed_queries` 收据派生 `by_channel[*].queries`）；
+  同一 Q 重复 mark 标注 `[already-charged]` 而不重复扣，`check` 会把手写计数判为 error。
+- `consume` 只负责 results 与 iterations；传 `--queries` 会直接报错。
+- 检索脚本必须带 `--query-id`；只给 `--state-dir` 不给 `--query-id` 会被拒绝。
 
 两个坑：① `check` 用 `not q.get("result_count")` 判定，所以 **0 条结果不能写 `done --result-count 0`**
 （会被判 "status=done 但缺 result_count"）。查到 0 条时标 `skipped`，并把「该 query 过窄返回 0 条」
@@ -52,8 +63,8 @@ python3 scripts/validate_state.py check <dir>
 这是关键词之外的必做入口，不受词表限制。直接以 seed 的 OpenAlex work id 构造 query：
 
 ```bash
-python3 scripts/search_academic.py --query "cites:W123456789" --state-dir <dir> --claim-ids C3
-python3 scripts/validate_state.py mark-query <dir> --id Q6 --status done --result-count 4
+python3 scripts/search_academic.py --query "cites:W123456789" --query-id Q6 \
+    --state-dir <dir> --claim-ids C3
 ```
 
 **低相关老文告警（即 query_recent_work）**：`saturation` 出现 `old_low_rel>=N` / `ADVISE:query_recent_work`

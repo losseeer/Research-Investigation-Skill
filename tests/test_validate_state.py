@@ -4,11 +4,14 @@
 运行： python3 tests/test_validate_state.py
 """
 
+import io
 import json
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -130,6 +133,8 @@ class TestCrossCheck(unittest.TestCase):
                  "result_count": 2},
             ]}],
         )
+        state["search_budget"]["executed_queries"] = ["Q1", "Q2"]
+        vs.sync_budget(state)
         errs, warns = self._run(state, [ev("E1", ["C1"])])
         self.assertEqual(errs, [])
         self.assertEqual(warns, [])
@@ -265,10 +270,9 @@ class TestBudgetAndSaturation(unittest.TestCase):
                  "strength": "medium", "implementation_level": "paper"}
         same_paper_other_source = dict(first, url="https://arxiv.org/abs/2402.1")
         write_state(self.dir, state)
-        added, skipped = vs.append_evidence(self.dir, [first], "academic", queries=1)
+        added, skipped = vs.append_evidence(self.dir, [first], "academic")
         self.assertEqual(len(added), 1)
-        added2, skipped2 = vs.append_evidence(self.dir, [same_paper_other_source], "academic",
-                                              queries=1)
+        added2, skipped2 = vs.append_evidence(self.dir, [same_paper_other_source], "academic")
         self.assertEqual(added2, [])
         self.assertEqual(len(skipped2), 1)
 
@@ -277,11 +281,11 @@ class TestBudgetAndSaturation(unittest.TestCase):
         item = {"id": None, "channel": "web", "source_type": "web", "title": "t1",
                 "url": "https://WWW.Example.com/a/?utm_source=x", "summary": "s",
                 "relevance": 0.5, "strength": "low", "implementation_level": "idea"}
-        added, _ = vs.append_evidence(self.dir, [item], "web", queries=1)
+        added, _ = vs.append_evidence(self.dir, [item], "web")
         self.assertEqual(len(added), 1)
         self.assertEqual(added[0]["id"], "E1")
         dup = dict(item, url="http://example.com/a")
-        added2, skipped2 = vs.append_evidence(self.dir, [dup], "web", queries=1)
+        added2, skipped2 = vs.append_evidence(self.dir, [dup], "web")
         self.assertEqual(added2, [])
         self.assertEqual(len(skipped2), 1)
 
@@ -300,32 +304,87 @@ class TestBudgetAndSaturation(unittest.TestCase):
         self.assertIn("2", row.split()[1])  # ev 列
 
     def test_budget_exhausted_writes_nothing(self):
+        """results 超上限时一条都不写，且 error 明确指向超预算（不是空结果）。"""
         state = empty_state()
-        state["search_budget"]["by_channel"]["github"] = {"max_queries": 1, "max_results": 10,
-                                                          "queries": 0, "results": 0}
+        state["search_budget"]["by_channel"]["github"]["max_results"] = 2
         write_state(self.dir, state)
         items = [{"title": f"t{i}", "url": f"https://github.com/a/{i}", "channel": "github",
                   "source_type": "github", "summary": "s", "relevance": 0.5,
                   "strength": "medium", "implementation_level": "code"} for i in range(3)]
         with self.assertRaises(ValueError):
-            vs.append_evidence(self.dir, items, "github", queries=2)
+            vs.append_evidence(self.dir, items, "github")
         _, evidence = vs.load_evidence(self.dir)
         self.assertEqual(evidence, [])  # 超预算：一条都不写
 
-    def test_consume_within_cap(self):
-        write_state(self.dir, empty_state())
-        vs.cmd_consume(type("A", (), {"dir": str(self.dir), "channel": "academic",
-                                      "queries": 2, "results": 10, "iterations": 0}))
-        state, _ = vs.load_state(self.dir)
-        self.assertEqual(state["search_budget"]["by_channel"]["academic"]["queries"], 2)
-        self.assertEqual(state["search_budget"]["used"]["results"], 10)
+    def test_query_is_charged_once_and_derived(self):
+        """同一 Q 重复 finish 只计一次；by_channel 计数由收据派生，不能手写。"""
+        state = empty_state(search_plans=[{"claim_id": "C1", "queries": [
+            {"id": "Q1", "channel": "academic", "query": "a"},
+            {"id": "Q2", "channel": "academic", "query": "b"}]}])
+        write_state(self.dir, state)
 
-    def test_consume_over_cap_exits(self):
+        _ch, charged = vs.finish_query(self.dir, "Q1", "done", 5)
+        self.assertTrue(charged)
+        _ch2, charged2 = vs.finish_query(self.dir, "Q1", "done", 7)  # 重复回写
+        self.assertFalse(charged2)
+
+        st, _ = vs.load_state(self.dir)
+        self.assertEqual(st["search_budget"]["by_channel"]["academic"]["queries"], 1)
+        self.assertEqual(st["search_budget"]["executed_queries"], ["Q1"])
+        self.assertEqual(st["search_budget"]["used"]["queries"], 1)
+
+        # 手写计数会被派生值覆盖
+        st["search_budget"]["by_channel"]["academic"]["queries"] = 99
+        write_state(self.dir, st)
+        st2, _ = vs.load_state(self.dir)
+        vs.sync_budget(st2)
+        self.assertEqual(st2["search_budget"]["by_channel"]["academic"]["queries"], 1)
+
+    def test_query_cap_rejects_extra_execution(self):
+        state = empty_state(search_plans=[{"claim_id": "C1", "queries": [
+            {"id": f"Q{i}", "channel": "github", "query": f"q{i}"} for i in (1, 2, 3)]}])
+        state["search_budget"]["by_channel"]["github"]["max_queries"] = 2
+        write_state(self.dir, state)
+        vs.finish_query(self.dir, "Q1", "done", 1)
+        vs.finish_query(self.dir, "Q2", "failed", 0)
+        with self.assertRaises(ValueError) as ctx:
+            vs.finish_query(self.dir, "Q3", "done", 1)
+        self.assertIn("超过上限", str(ctx.exception))
+
+    def test_consume_no_longer_counts_queries(self):
+        """query 计数已收敛到收据：consume 传 queries 必须报错而不是静默忽略。"""
         write_state(self.dir, empty_state())
-        args = type("A", (), {"dir": str(self.dir), "channel": "github",
-                              "queries": 7, "results": 0, "iterations": 0})
-        with self.assertRaises(SystemExit):
-            vs.cmd_consume(args)
+        with self.assertRaises(ValueError) as ctx:
+            vs.consume_budget(self.dir, "academic", queries=2, results=10)
+        self.assertIn("charge_query", str(ctx.exception))
+
+    def test_executable_queries_and_next_query(self):
+        state = empty_state(search_plans=[{"claim_id": "C1", "queries": [
+            {"id": "Q1", "channel": "academic", "query": "a", "status": "done",
+             "result_count": 3},
+            {"id": "Q2", "channel": "github", "query": "b"},
+            {"id": "Q3", "channel": "github", "query": "c"}]}])
+        state["search_budget"]["by_channel"]["github"]["max_queries"] = 1
+        write_state(self.dir, state)
+        vs.finish_query(self.dir, "Q1", "done", 3)
+        st, _ = vs.load_state(self.dir)
+        self.assertEqual([q["id"] for _c, q in vs.executable_queries(st)], ["Q2", "Q3"])
+        vs.cmd_next_query(type("A", (), {"dir": str(self.dir), "channel": None, "json": False}))
+        vs.finish_query(self.dir, "Q2", "done", 2)
+        st2, _ = vs.load_state(self.dir)
+        self.assertEqual(vs.executable_queries(st2), [])  # github 额度已耗尽
+
+    def test_cross_check_flags_counter_drift(self):
+        """手写 by_channel 计数与收据不一致 → 直接判为 error。"""
+        state = empty_state(search_plans=[{"claim_id": "C1", "queries": [
+            {"id": "Q1", "channel": "academic", "query": "a"}]}])
+        write_state(self.dir, state)
+        vs.finish_query(self.dir, "Q1", "done", 1)
+        st, _ = vs.load_state(self.dir)
+        st["search_budget"]["by_channel"]["academic"]["queries"] = 42
+        errs = []
+        vs.cross_check(st, [], errs, [])
+        self.assertTrue(any("不一致" in e for e in errs))
 
     def test_saturation_detects_independence(self):
         state = empty_state(claims=[{"id": "C1", "statement": "x", "type": "technical",
@@ -407,6 +466,217 @@ class TestStageGates(unittest.TestCase):
         errs = []
         vs.check_stage(state, 4, errs)
         self.assertTrue(any("未裁决" in e for e in errs))
+
+
+class TestBudgetProfiles(unittest.TestCase):
+    """README TODO #3：quick / standard / deep 三档预算 profile。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _init(self, profile=None):
+        args = SimpleNamespace(idea="profile test idea", domain="",
+                               root=str(self.root), profile=profile)
+        with redirect_stdout(io.StringIO()):
+            vs.cmd_init(args)
+        d = self.root / "profile-test-idea"
+        state, _ = vs.load_state(d)
+        return d, state
+
+    def test_default_profile_is_from_config(self):
+        cfg = vs.load_profiles()
+        _d, state = self._init()
+        self.assertEqual(state["search_budget"]["profile"], cfg["default"])
+        self.assertEqual(state["search_budget"]["max_iterations"],
+                         cfg["profiles"][cfg["default"]]["max_iterations"])
+
+    def test_each_profile_applies_limits(self):
+        expected = {"quick": (4, 14), "standard": (8, 30), "deep": (14, 55)}
+        cfg = vs.load_profiles()["profiles"]
+        for name, (iters, queries) in expected.items():
+            _d, state = self._init(name)
+            b = state["search_budget"]
+            self.assertEqual(b["profile"], name)
+            self.assertEqual(b["max_iterations"], iters)
+            self.assertEqual(b["max_queries"], queries)
+            self.assertEqual(b["by_channel"]["academic"]["max_queries"],
+                             cfg[name]["by_channel"]["academic"]["max_queries"])
+            self.assertEqual(b["iterations"], 0)
+            self.assertEqual(b["used"], {"queries": 0, "results": 0})
+
+    def test_profile_writes_saturation_thresholds(self):
+        _d, state = self._init("quick")
+        self.assertEqual(state["search_budget"]["saturation"],
+                         {"min_independent": 2, "max_rounds_without_change": 1,
+                          "duplicate_rate": 0.7})
+
+    def test_init_passes_schema(self):
+        v = vs.Validator(vs.SCHEMA_DIR)
+        for name in vs.PROFILE_NAMES:
+            d, _s = self._init(name)
+            body = json.loads((d / "research-state.json").read_text(encoding="utf-8"))
+            errs = v.validate(body, v.load("research-state.json"))
+            self.assertEqual(errs, [], f"profile {name} 产出的 state 不合法: {errs}")
+
+    def test_unknown_profile_exits(self):
+        with self.assertRaises(SystemExit) as ctx:
+            self._init("turbo")
+        self.assertIn("未知档位", str(ctx.exception))
+
+    def test_quick_is_tighter_than_deep(self):
+        _d, q = self._init("quick")
+        _d2, dp = self._init("deep")
+        for ch in vs.CHANNELS:
+            self.assertLess(q["search_budget"]["by_channel"][ch]["max_queries"],
+                            dp["search_budget"]["by_channel"][ch]["max_queries"])
+
+    def test_saturation_thresholds_come_from_profile(self):
+        """quick 档判据更松：2 条独立证据即饱和，standard 需 3 条。"""
+        evidence = [
+            {"id": "E1", "url": "https://a.example/x", "source": "a",
+             "source_type": "academic", "claim_ids": ["C1"], "title": "t1"},
+            {"id": "E2", "url": "https://b.example/y", "source": "b",
+             "source_type": "github", "claim_ids": ["C1"], "title": "t2"},
+        ]
+        claims = [{"id": "C1", "statement": "s", "type": "technical",
+                   "importance": "high", "status": "unknown", "confidence": 0.0,
+                   "evidence_ids": [], "search_queries": []}]
+
+        _d, st_quick = self._init("quick")
+        st_quick["claims"] = claims
+        _d2, st_std = self._init("standard")
+        st_std["claims"] = claims
+
+        row_quick = vs.saturation_rows(st_quick, evidence, vs.saturation_thresholds(st_quick)[0])
+        row_std = vs.saturation_rows(st_std, evidence, vs.saturation_thresholds(st_std)[0])
+        self.assertTrue(row_quick[0]["saturated"])
+        self.assertFalse(row_std[0]["saturated"])
+
+    def test_legacy_state_falls_back_with_flag(self):
+        state = {"search_budget": {"max_iterations": 8, "max_queries": 30, "iterations": 0,
+                                   "used": {}, "by_channel": {}}}
+        th, from_profile = vs.saturation_thresholds(state)
+        self.assertFalse(from_profile)
+        self.assertEqual(th, vs.SATURATION_DEFAULTS)
+
+    def test_profiles_command_lists_all(self):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            vs.cmd_profiles(SimpleNamespace())
+        out = buf.getvalue()
+        for name in vs.PROFILE_NAMES:
+            self.assertIn(name, out)
+
+
+class TestAutoSaturationAndTopK(unittest.TestCase):
+    """README TODO #2：自动 Evidence Saturation（stop-check）+ Evidence top-k 裁剪（topk）。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _state(self, **kw):
+        st = empty_state(**kw)
+        return st
+
+    def test_stop_check_marks_stopped_and_finalizes(self):
+        """3 条独立证据 + 独立证据达阈值 → 该 Claim 自动 stopped，循环判 FINALIZE。"""
+        st = self._state(claims=[{"id": "C1", "statement": "x", "type": "technical",
+                                  "importance": "high", "status": "unknown",
+                                  "confidence": 0.0, "evidence_ids": []}],
+                         search_plans=[{"claim_id": "C1", "queries": [
+                             {"id": "Q1", "channel": "pending_ch", "query": "q"}]}])
+        st["search_plans"] = [{"claim_id": "C1", "queries": [
+            {"id": "Q1", "channel": "web", "query": "q", "status": "pending"}]}]
+        write_state(self.dir, st, evidence=[
+            ev("E1", ["C1"], source="Nature"),
+            ev("E2", ["C1"], source="IEEE", source_type="github", channel="github"),
+            ev("E3", ["C1"], source="ACM"),
+        ])
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            vs.cmd_stop_check(SimpleNamespace(dir=str(self.dir), json=False))
+        out = buf.getvalue()
+        self.assertIn("STOPPED", out)
+        self.assertIn("FINALIZE", out)
+        st2, _ = vs.load_state(self.dir)
+        self.assertTrue(st2["saturation"]["C1"]["stopped"])
+        self.assertIn("independence", st2["saturation"]["C1"]["reason"])
+
+    def test_stop_check_continues_when_pending_queries_exist(self):
+        st = self._state(claims=[{"id": "C1", "statement": "x", "type": "technical",
+                                  "importance": "high", "status": "unknown",
+                                  "confidence": 0.0, "evidence_ids": []}],
+                         search_plans=[{"claim_id": "C1", "queries": [
+                             {"id": "Q1", "channel": "web", "query": "q", "status": "pending"}]}])
+        write_state(self.dir, st, evidence=[ev("E1", ["C1"], source="Nature")])
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            vs.cmd_stop_check(SimpleNamespace(dir=str(self.dir), json=False))
+        out = buf.getvalue()
+        self.assertIn("CONTINUE", out)
+        st2, _ = vs.load_state(self.dir)
+        self.assertFalse(st2.get("saturation", {}).get("C1", {}).get("stopped"))
+
+    def test_stop_check_finalizes_when_no_executable_query(self):
+        st = self._state(claims=[{"id": "C1", "statement": "x", "type": "technical",
+                                  "importance": "high", "status": "unknown",
+                                  "confidence": 0.0, "evidence_ids": []}])
+        st["search_plans"] = []
+        write_state(self.dir, st, evidence=[])
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            vs.cmd_stop_check(SimpleNamespace(dir=str(self.dir), json=False))
+        self.assertIn("FINALIZE", buf.getvalue())
+        self.assertIn("无可执行的 query", buf.getvalue())
+
+    def test_stop_check_honors_profile_threshold(self):
+        """quick 档面对 2 条独立证据应判饱和并 FINALIZE。"""
+        st = self._state(claims=[{"id": "C1", "statement": "x", "type": "technical",
+                                  "importance": "high", "status": "unknown",
+                                  "confidence": 0.0, "evidence_ids": []}])
+        st["search_plans"] = []
+        st["search_budget"]["profile"] = "quick"
+        st["search_budget"]["saturation"] = {"min_independent": 2,
+                                             "max_rounds_without_change": 1,
+                                             "duplicate_rate": 0.7}
+        write_state(self.dir, st, evidence=[
+            ev("E1", ["C1"], source="Nature"),
+            ev("E2", ["C1"], source="IEEE", source_type="github", channel="github")])
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            vs.cmd_stop_check(SimpleNamespace(dir=str(self.dir), json=False))
+        self.assertIn("STOPPED", buf.getvalue())
+
+    def test_topk_picks_highest_relevance_and_trims(self):
+        write_state(self.dir, empty_state(), evidence=[
+            ev("E1", ["C1"], relevance=0.5),   # 低于 min_relevance，直接排除
+            ev("E2", ["C1"], relevance=0.9),
+            ev("E3", ["C1"], relevance=0.7),
+            ev("E4", ["C1"], relevance=0.8),   # 满足阈值但被 k=2 裁掉
+        ])
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            vs.cmd_topk(SimpleNamespace(dir=str(self.dir), claim="C1", k=2, min_relevance=0.6))
+        out = buf.getvalue()
+        self.assertIn("E2", out)
+        self.assertNotIn("E1", out)          # 低于 min_relevance
+        self.assertNotIn("E3", out)          # 被 k=2 裁掉，但仍在 evidence.jsonl
+        self.assertIn("1 条被裁剪", out)
+        self.assertLess(out.index("E2"), out.index("E4"))  # relevance 降序
+
+    def test_topk_rejects_k_over_context_limit(self):
+        write_state(self.dir, empty_state(), evidence=[])
+        with self.assertRaises(SystemExit) as ctx:
+            vs.cmd_topk(SimpleNamespace(dir=str(self.dir), claim=None, k=11, min_relevance=0.6))
+        self.assertIn("10", str(ctx.exception))
 
 
 if __name__ == "__main__":

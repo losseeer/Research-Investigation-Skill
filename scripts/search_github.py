@@ -61,7 +61,14 @@ def main():
     p.add_argument("--min-stars", type=int, default=0)
     p.add_argument("--state-dir", default="")
     p.add_argument("--claim-ids", default="")
+    p.add_argument("--query-id", default="",
+                   help="search_plans 中对应的 Q id；传了 --state-dir 就必须传，用于 query 级记账")
     args = p.parse_args()
+
+    if args.state_dir and not args.query_id:
+        print("FATAL: 传了 --state-dir 就必须传 --query-id（配额按 planned query 记账）",
+              file=sys.stderr)
+        return 1
 
     claim_ids = [c.strip() for c in args.claim_ids.split(",") if c.strip()]
 
@@ -96,13 +103,27 @@ def main():
         return 0
 
     try:
-        added, skipped = vs.append_evidence(args.state_dir, candidates, "github", queries=1)
+        added, skipped = vs.append_evidence(args.state_dir, candidates, "github",
+                                            query_id=args.query_id)
     except ValueError as e:
         print(f"FATAL: {e}", file=sys.stderr)
+        _finish(args.state_dir, args.query_id, "failed", 0)
         return 1
-    print(f"added {len(added)} / skipped {len(skipped)} (dup)"
+    charged = _finish(args.state_dir, args.query_id, "done", len(added))
+    print(f"query {args.query_id}: added {len(added)} / skipped {len(skipped)} (dup)"
+          f"  [{'charged' if charged else 'already-charged'}]"
           + (f" -> {[a['id'] for a in added]}" if added else ""))
     return 0
+
+
+def _finish(state_dir, qid, status, result_count):
+    """统一收口：回写 query 状态并按所属通道计费一次（同一 Q 幂等）。"""
+    try:
+        _ch, charged = vs.finish_query(state_dir, qid, status, result_count)
+        return charged
+    except ValueError as e:  # 该通道 query 额度已耗尽
+        print(f"FATAL: {e}", file=sys.stderr)
+        return False
 
 
 if __name__ == "__main__":

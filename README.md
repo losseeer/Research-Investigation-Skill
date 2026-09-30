@@ -32,7 +32,9 @@
 - **Novelty 评级**：从 none 到 breakthrough 五档，必须给出依据，不允许「感觉挺新的」这种判断。
 - **可行性分析**：技术瓶颈分为工程问题（堆人能解决）/ 研究问题（方法还没人验证）/ 根本性问题（受能力边界限制）三类，帮你判断难度性质。
 - **成熟度甄别**：区分「有论文」「有代码」「有产品」「验证过市场」——论文存在 ≠ 技术成熟，不会把一个 demo 说成是成熟方案。
-- **预算与自动收口**：每个检索通道有查询上限，证据饱和自动停止；预算耗尽时强制收口出报告，不会无限搜索也不会硬凑结论。
+- **query 级记账**：每条检索都挂在 `search_plans` 的某条 Q 上，配额由「已执行收据」派生，同一条重复执行不重复扣。`by_channel` 计数手写无效——预算花在哪次检索上全程可回溯。
+- **预算档位**：`quick` / `standard` / `deep` 三档，同时控制检索额度与饱和判据阈值（详见「快速开始」第 4 步）。
+- **自动收口**：`stop-check` 按档位阈值判定证据饱和、把 Claim 标记为 stopped 并给出 CONTINUE / FINALIZE 判决；`topk` 按相关度裁剪本轮进上下文的证据（≤10 条）。预算耗尽时强制出报告，不会无限搜索也不会硬凑结论。
 - **14 节调研报告**：从执行摘要、主张清单、已有工作综述，到瓶颈分析、风险声明和建议的下一步，结构完整可直接用于汇报。
 
 ## 使用场景
@@ -108,16 +110,38 @@ export RESEARCH_MAILTO="you@example.com"   # 学术检索源 OpenAlex 必填，�
 export GITHUB_TOKEN="ghp_xxx"              # 可选，配上后 GitHub 检索额度 6 → 20
 ```
 
-### 4. 验证安装（可选）
+### 4. 选择预算档位（可选）
+
+三档预算，控制「愿意花多少检索额度」：
 
 ```bash
-python3 tests/test_validate_state.py   # 28 项：schema / 预算 / 饱和 / 写回 / 收口
-python3 tests/test_pipeline.py         # 5 项：全链路离线回归
+python3 scripts/validate_state.py profiles
+```
+
+| 档位 | max_iterations | max_queries | academic | github | web | product | 饱和判据（独立证据 / 无变化轮数 / 重复率） |
+|---|---|---|---|---|---|---|---|
+| `quick` | 4 | 14 | 6 | 4 | 3 | 1 | 2 / 1 / 0.7 |
+| `standard` ⭐ 默认 | 8 | 30 | 12 | 6 | 8 | 4 | 3 / 2 / 0.6 |
+| `deep` | 14 | 55 | 24 | 12 | 14 | 6 | 4 / 3 / 0.5 |
+
+发起调研时在请求里带一句就行（例如「用 quick 档快速看下有没有人做过」），或者直接命令行指定：
+
+```bash
+python3 scripts/validate_state.py init --idea "<idea>" --profile deep
+```
+
+额度在 init 时**拷贝进 state**，之后不受配置文件改动影响；想换档请重新 init。
+
+### 5. 验证安装（可选）
+
+```bash
+python3 tests/test_validate_state.py   # 48 项：schema / 预算 / 档位 / query 记账 / 自动饱和 / 写回 / 收口
+python3 tests/test_pipeline.py         # 7 项：全链路离线回归（含 MODIFY / PIVOT 路径）
 ```
 
 更直接的方式：新会话里发起一次小调研（见下一步），看它是否按「拆解 → 取证 → 报告」流程工作。
 
-### 5. 发起调研
+### 6. 发起调研
 
 在 agent 对话中直接描述你的 idea 并表达调研意图，例如：
 
@@ -130,7 +154,7 @@ python3 tests/test_pipeline.py         # 5 项：全链路离线回归
 
 Skill 会自动接管整个流程：拆解 Claim → 规划检索 → 多通道取证 → 逐条验证 → Prior Art / 可行性分析 → 生成报告。过程中所有状态落盘，中断后可续跑。
 
-### 6. 查看结果
+### 7. 查看结果
 
 产出在当前项目目录的 `research/<idea-slug>/` 下：
 
@@ -161,8 +185,5 @@ Idea → Claims → 多通道搜索 → Evidence → 逐条裁决
 
 ## TODO
 
-- [ ] 增加 quick / standard / deep profiles。
 - [ ] 增加时间、上下文和 Fetch 限制。
-- [ ] 实现 query 状态、去重和统一记账。
-- [ ] 实现自动 saturation 和 Evidence top-k 裁剪。
 - [ ] 优化网络重试、缓存并补充回归测试。

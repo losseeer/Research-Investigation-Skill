@@ -135,9 +135,28 @@
       "required": ["max_iterations", "max_queries", "iterations", "used", "by_channel"],
       "additionalProperties": false,
       "properties": {
+        "profile": {
+          "enum": ["quick", "standard", "deep"],
+          "description": "预算档位，init 时由 --profile 写入；额度已拷贝进本对象，后续改档不追溯影响已有 state"
+        },
+        "saturation": {
+          "type": "object",
+          "description": "Evidence Saturation 判据阈值，init 时由 profile 写入脚本可读位点",
+          "additionalProperties": false,
+          "properties": {
+            "min_independent": { "type": "integer", "minimum": 1 },
+            "max_rounds_without_change": { "type": "integer", "minimum": 1 },
+            "duplicate_rate": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        },
         "max_iterations": { "type": "integer", "minimum": 1 },
         "max_queries": { "type": "integer", "minimum": 1 },
         "iterations": { "type": "integer", "minimum": 0 },
+        "executed_queries": {
+          "type": "array",
+          "description": "已计费的 query 收据（Q id）。query 计数由本数组派生，禁止另外手写 by_channel[*].queries",
+          "items": { "type": "string", "pattern": "^Q[0-9]+$" }
+        },
         "used": {
           "type": "object",
           "additionalProperties": false,
