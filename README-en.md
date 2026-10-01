@@ -1,5 +1,9 @@
 # Research Investigation Skill — AI-Powered Due Diligence for Your Ideas
 
+[![license](https://img.shields.io/github/license/losseeer/Research-Investigation-Skill)](LICENSE)
+[![stars](https://img.shields.io/github/stars/losseeer/Research-Investigation-Skill?style=social)](https://github.com/losseeer/Research-Investigation-Skill)
+![PRs](https://img.shields.io/badge/PRs-welcome-brightgreen)
+
 English | [中文](README.md)
 
 ## What Is This
