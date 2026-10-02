@@ -40,7 +40,7 @@ Every conclusion in the report carries evidence IDs, so you can trace each one b
 - **Per-query accounting** — Every search is tied to a specific `Q` in `search_plans`; budget counts are derived from execution receipts, and re-running the same query is never charged twice. Hand-written per-channel counters are rejected, so every unit of budget stays traceable to a query.
 - **Budget profiles** — `quick` / `standard` / `deep`, controlling both the search caps and the saturation thresholds (see Quick Start step 4).
 - **Automatic closure** — `stop-check` applies the profile thresholds, marks saturated Claims as stopped, and issues a CONTINUE / FINALIZE verdict; `topk` trims the evidence admitted into context this round (≤10 items). When the budget runs out, the report is still produced — with undecidable claims honestly marked, never force-fitted.
-- **Timeliness gate** — Each Claim is tagged `timeless` (theoretical properties, bounds, established mechanisms) or `evolving` (capability frontiers, performance, current state of the art). An `evolving` Claim cannot be judged "still holds today" without evidence inside the recency window (2 years by default, tunable per claim or globally) — validation rejects it outright, so a two-year-old LLM result can't masquerade as today's reality.
+- **Timeliness gate** — Each Claim is tagged `timeless` (theoretical properties, bounds, established mechanisms) or `evolving` (capability frontiers, performance, current state of the art). An `evolving` Claim cannot be judged "still holds today" without evidence inside the recency window (2 years by default, tunable per claim or globally) — validation rejects it outright, so a two-year-old LLM result can't masquerade as today's reality. The year is always the "current-state point" (GitHub repos use the last push year, not the creation year), and evidence retrieved far from the base date is flagged as a stale snapshot.
 - **15-section research report** — From executive summary, claim list, and existing-work review to bottleneck analysis, time coverage, risk disclosure, and recommended next steps — ready to present as-is.
 
 ## Use Cases
@@ -199,5 +199,6 @@ Six stages (each stage exit is gated by automatic validation — failure blocks 
 
 - [ ] Add fetch limits (max items / bytes per fetch) so long pages stop flooding the context.
 - [ ] Optimize retries and caching, and add regression tests.
-- [ ] Evidence-level `as_of`: record retrieval dates per source (today only Claim-level timeliness is enforced).
-- [ ] GitHub channel should use `pushed_at` rather than `created_at` to judge whether a repo is still maintained (today it misjudges active old repos as stale).
+- [ ] When a URL's content changes over time (product capability / pricing pages), emit a **new Evidence entry**
+      rather than adding time fields to the old one — this touches the dedupe rule (URL-based today); do it when
+      the case actually shows up.

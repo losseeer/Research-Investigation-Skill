@@ -995,6 +995,83 @@ class TestTimeliness(unittest.TestCase):
         self.assertEqual(vs.Validator(SCHEMA_DIR).validate(
             state, vs.Validator(SCHEMA_DIR).load("research-state.json")), [])
 
+    # --- 证据快照（retrieved_at）-------------------------------------------
+    def test_stale_snapshot_warns(self):
+        """证据是半年前的快照：不阻断，但必须提醒 evolving 结论要按当前时点重核。"""
+        state = empty_state(claims=[self._supported("C1", time_sensitivity="timeless")],
+                            time_policy={"as_of": "2026-10-02", "recency_window_years": 2})
+        errs, warns = self._errors(state, [ev("E1", ["C1"], retrieved_at="2025-01-01T10:00:00")])
+        self.assertEqual(errs, [])
+        self.assertTrue(any("旧快照" in w and "2025-01-01" in w for w in warns), warns)
+
+    def test_fresh_snapshot_no_warning(self):
+        state = empty_state(claims=[self._supported("C1", time_sensitivity="timeless")],
+                            time_policy={"as_of": "2026-10-02", "recency_window_years": 2})
+        errs, warns = self._errors(state, [ev("E1", ["C1"], retrieved_at="2026-10-01T10:00:00")])
+        self.assertEqual(errs, [])
+        self.assertFalse(any("旧快照" in w for w in warns), warns)
+
+    def test_no_retrieved_at_keeps_quiet(self):
+        """没记 retrieved_at 就无从判断，不报错也不瞎提醒。"""
+        state = empty_state(claims=[self._supported("C1", time_sensitivity="timeless")],
+                            time_policy={"as_of": "2026-10-02", "recency_window_years": 2})
+        errs, warns = self._errors(state, [ev("E1", ["C1"])])
+        self.assertEqual(errs, [])
+        self.assertFalse(any("快照" in w for w in warns), warns)
+
+    def test_retrieved_span_and_saturation_output(self):
+        st = empty_state(claims=[claim("C1", time_sensitivity="timeless")],
+                         time_policy={"as_of": "2026-10-02", "recency_window_years": 2})
+        write_state(self.dir, st, evidence=[
+            ev("E1", ["C1"], retrieved_at="2026-09-01T10:00:00"),
+            ev("E2", ["C1"], retrieved_at="2026-10-02T10:00:00")])
+        self.assertEqual(vs.retrieved_span([
+            {"retrieved_at": "2026-09-01"}, {"retrieved_at": "2026-10-02"}]),
+            {"n": 2, "oldest": "2026-09-01", "newest": "2026-10-02"})
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            vs.cmd_saturation(SimpleNamespace(dir=str(self.dir)))
+        self.assertIn("retrieved=2026-09-01~2026-10-02", buf.getvalue())
+
+
+class TestGithubRecencySemantics(unittest.TestCase):
+    """B1：仓库的 publication_year 取最后 push 年（现状时点），不是创建年。"""
+
+    repo = {
+        "full_name": "old-but-active/pkg",
+        "html_url": "https://github.com/old-but-active/pkg",
+        "owner": {"login": "old-but-active"},
+        "stargazers_count": 1200,
+        "language": "Python",
+        "description": "still maintained",
+        "topics": ["llm"],
+        "created_at": "2016-03-01T00:00:00Z",
+        "pushed_at": "2026-08-30T00:00:00Z",
+    }
+
+    def test_publication_year_is_last_push_not_creation(self):
+        import search_github as sg
+        item = sg.from_repo(dict(self.repo), ["C1"])
+        self.assertEqual(item["publication_year"], 2026)
+        self.assertIn("pushed 2026-08-30", item["summary"])
+        self.assertIn("created 2016", item["summary"])   # 创建年保留，作为「历史悠久」的信号
+
+    def test_falls_back_to_created_when_no_push(self):
+        import search_github as sg
+        r = dict(self.repo)
+        r["pushed_at"] = None
+        item = sg.from_repo(r, ["C1"])
+        self.assertEqual(item["publication_year"], 2016)
+        self.assertIn("created 2016", item["summary"])
+
+    def test_active_old_repo_counts_as_recent(self):
+        """2016 创建但仍在维护：不该再被时效门禁判为过时（这是改语义的原因）。"""
+        import search_github as sg
+        item = sg.from_repo(dict(self.repo), ["C1"])
+        state = empty_state(claims=[claim("C1", time_sensitivity="evolving")],
+                            time_policy={"as_of": "2026-10-02", "recency_window_years": 2})
+        self.assertEqual(vs.recent_count(state, state["claims"][0], [item]), 1)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

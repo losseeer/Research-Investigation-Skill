@@ -108,6 +108,7 @@ Because：{{ analysis.novelty.because }}
 ## 11. Time Coverage
 
 > as_of：**{{ time_policy.as_of }}** · 近年窗口：**{{ time_policy.recency_window_years }} 年**（窗口内 = 出版年份 ≥ {{ cutoff_year }}）
+> 证据取回区间：**{{ retrieved_span }}**（`retrieved_at` 最早 ~ 最新；距 as_of 超 180 天属旧快照，见下）
 
 「旧证据支撑现状断言」是时效性最典型的静默失效，必须显式交代：
 
@@ -123,6 +124,9 @@ Because：{{ analysis.novelty.because }}
 - 标 `timeless` 必须写出理由（理论性质、上下界、已确立的机制性事实），写在 Claim 的 `notes` 里。
   「懒得补检索」不是 `timeless`。
 - 报告里出现「目前 / 现在 / 已能 / 仍是」这类现状措辞时，对应 Claim 必须是 `evolving` 且有窗口内证据。
+- 取回区间偏旧（最早一条距 `as_of` > 180 天）时，在本节写明「结论基于 X 年的快照」，
+  并在 §12 时效缺口里列出需要重核的 Claim。`publication_year` 说的是内容时点，`retrieved_at` 说的是抓取时点，
+  两者都新才算可靠。
 
 ---
 

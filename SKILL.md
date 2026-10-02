@@ -153,6 +153,10 @@ python3 scripts/validate_state.py init --idea "<idea>" --recency-window 5   # �
 | `time_sensitivity` | Claim | `evolving` = 成立依赖时间（能力边界 / 性能 / 现状）；`timeless` = 永真事实（理论性质 / 上下界 / 已确立机制）。**判定不了取 `evolving`** |
 | `recency_window_years` | Claim（覆盖全局） | 该 Claim 的「近年」窗口，默认 2 年 |
 | `time_policy` | state | `{as_of, recency_window_years}`，`as_of` 缺省 = 今天 |
+| `retrieved_at` | Evidence | 抓取时点（与内容时点 `publication_year` 是两件事）；最早一条距 `as_of` > 180 天 → `check` 报「旧快照」warning |
+
+`publication_year` 一律取「现状时点」：论文用发表年，**GitHub 用最后一次 push 的年**（创建年只留在 summary）——
+用创建年会把「2016 创建但仍在维护」的仓库误判为过时，逼着白补一轮检索。
 
 三条落点：
 

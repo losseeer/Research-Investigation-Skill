@@ -33,15 +33,22 @@ def from_repo(r: dict, claim_ids) -> dict:
     desc = (r.get("description") or "").strip()
     topics = ", ".join((r.get("topics") or [])[:6])
     pushed = (r.get("pushed_at") or "")[:10]
+    created = (r.get("created_at") or "")[:10]
     lang = r.get("language") or ""
+    pushed_year = pushed[:4] if pushed[:4].isdigit() else None
+    created_year = created[:4] if created[:4].isdigit() else None
+    # publication_year 的语义是「这条证据反映的现状时点」。对仓库来说那是**最后一次 push** 的年份，
+    # 不是创建年：2016 创建但仍在维护的仓库若算成 2016，会在时效门禁里被判「过时」，
+    # 逼着补一轮检索（白白烧额度）。创建年放进 summary 保留「历史悠久 = 稳定」的信号。
+    year = pushed_year or created_year
     return {
         "channel": "github",
         "source_type": "github",
         "title": r.get("full_name") or "",
         "url": r.get("html_url") or "",
         "source": (r.get("owner") or {}).get("login") or "",
-        "publication_year": int(r.get("created_at", "0000")[:4]) if r.get("created_at") else None,
-        "summary": (f"★{stars} · {lang} · pushed {pushed}"
+        "publication_year": int(year) if year else None,
+        "summary": (f"★{stars} · {lang} · created {created_year or '?'} · pushed {pushed or '?'}"
                     + (f" · topics: {topics}" if topics else "")
                     + (f". {desc}" if desc else ""))[:600],
         "evidence": desc,

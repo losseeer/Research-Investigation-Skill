@@ -65,7 +65,8 @@ python3 scripts/validate_state.py merge <dir> --data '{
 
 ### §11 怎么写
 
-`as_of` 与窗口取自 `state.time_policy`（缺字段时是「今天 + 默认 2 年」）。
+`as_of` 与窗口取自 `state.time_policy`（缺字段时是「今天 + 默认 2 年」），
+证据取回区间取自 `evidence[].retrieved_at`（`saturation` 首行直接打印）。
 对每个给出正向裁决（`supported` / `partially_supported`）的 Claim 交代：
 
 - `evolving`：窗口内有几条证据、最新是哪一年。没有窗口内证据的，`check` 已在 stage 4 拦下，

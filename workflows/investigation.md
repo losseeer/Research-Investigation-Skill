@@ -24,6 +24,12 @@ python3 scripts/validate_state.py init --idea "<idea>" --recency-window 5
 逐条判定在 Stage 1 完成（见 `prompts/decompose.md`），判定不了取 `evolving`——
 错标 evolving 只多查一轮，错标 timeless 会让过时结论直接进最终建议。
 
+判定读的是 `publication_year`，它的语义是「这条证据反映的现状时点」：论文取发表年，
+**GitHub 取最后一次 push 的年**（不是创建年，否则会把活跃老仓库误判为过时、白补一轮检索）。
+
+另一类是**旧快照**：`retrieved_at` 最早一条距 `as_of` 超过 180 天时 `check` 给 warning
+（`saturation` 首行也打印 `retrieved=…~…`）。续跑的调查最容易踩——内容时点和抓取时点都新才算可靠。
+
 ## Action Space
 
 每一轮从下面选一个动作执行。动作本身由 Agent 判断，但**每个动作前后都要过一次 `validate_state.py`**。

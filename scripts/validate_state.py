@@ -563,6 +563,14 @@ def cross_check(state: dict, evidence: list, errors: list, warnings: list):
     # 时效门禁：evolving Claim 给出正向裁决时，必须有窗口内的证据。
     # 只用「旧证据」得出「现在仍成立」是时效性最典型的静默失效，必须显式拦住。
     tp = time_policy(state)
+    span = retrieved_span(evidence)
+    if span["n"] and span["oldest"]:
+        gap = days_between(span["oldest"], tp["as_of"])
+        if gap is not None and gap > STALE_SNAPSHOT_DAYS:
+            warnings.append(
+                f"证据快照偏旧：{span['n']} 条中最早取回于 {span['oldest']}，距 as_of {tp['as_of']} 已 {gap} 天"
+                f"（> {STALE_SNAPSHOT_DAYS}）。evolving Claim 的结论应按当前时点重新核对；"
+                f"续跑时补一轮检索比直接沿用旧快照可靠")
     for c in state.get("claims", []):
         cid = c.get("id")
         evs = [e for e in evidence if cid in e.get("claim_ids", [])]
@@ -858,6 +866,15 @@ def cmd_saturation(args):
     tp = time_policy(state)
     print(f"as_of={tp['as_of']}  recent_window={tp['window']}y"
           + ("" if tp["explicit"] else "  (state 未记录 time_policy，用默认值)"))
+    span = retrieved_span(evidence)
+    if span["n"]:
+        line = f"retrieved={span['oldest']}~{span['newest']}  ({span['n']} 条)"
+        gap = days_between(span["oldest"], tp["as_of"])
+        if gap is not None and gap > STALE_SNAPSHOT_DAYS:
+            line += f"  ⚠ 最早一条距 as_of {gap} 天，属旧快照"
+        print(line)
+    else:
+        print("retrieved=-  (证据未记录 retrieved_at)")
     print(f"{'claim':<8}{'ev':>4}{'indep':>7}{'chg':>5}{'dup':>7}{'oldLR':>7}"
           f"{'recent':>7}{'rounds':>8}  flags")
     for r in rows:
@@ -1147,6 +1164,7 @@ MAX_CONTEXT_EVIDENCE = 10  # SKILL.md Hard Rules：单轮迭代最多 10 条证�
 DEFAULT_RECENCY_WINDOW_YEARS = 2  # evolving Claim 需要「近年证据」的默认窗口
 DEFAULT_TIME_SENSITIVITY = "evolving"  # 缺字段时取保守值：宁可多查一轮，也不让过时结论蒙混
 POSITIVE_VERDICTS = ("supported", "partially_supported")  # 只有正向裁决才需要「近年证据」背书
+STALE_SNAPSHOT_DAYS = 180  # 证据取回时间距 as_of 超过这个天数 → 提醒是旧快照（warning，不阻断）
 
 
 def time_policy(state: dict) -> dict:
@@ -1205,6 +1223,25 @@ def recent_count(state, claim, evs) -> int:
     """窗口内（>= 分界年）的证据条数。"""
     cutoff = recent_cutoff(state, claim)
     return sum(1 for e in evs if (y := evidence_year(e)) is not None and y >= cutoff)  # SKILL.md Hard Rules：单轮迭代最多 10 条证据摘要进上下文
+
+
+def _parse_date(s: str):
+    try:
+        return datetime.strptime(str(s)[:10], "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return None
+
+
+def days_between(start: str, end: str):
+    """两个 YYYY-MM-DD（或 ISO 时间戳）之间的天数；解析不了返回 None。"""
+    a, b = _parse_date(start), _parse_date(end)
+    return (b - a).days if a and b else None
+
+
+def retrieved_span(evidence: list) -> dict:
+    """证据的取回区间。`retrieved_at` 一直有写，但没人读——旧快照是另一类时效失效。"""
+    days = sorted(d for d in (str(e.get("retrieved_at") or "")[:10] for e in evidence) if d)
+    return {"n": len(days), "oldest": days[0] if days else None, "newest": days[-1] if days else None}
 
 
 def cmd_stop_check(args):
