@@ -53,6 +53,23 @@
 - **medium**：影响可行性或差异化，但不决定成败。
 - **low**：背景性、加分项。预算紧张时可跳过检索。
 
+### time_sensitivity 怎么定
+
+每条 Claim 都要标：这条断言的成立**是否依赖时间**。
+
+| 取值 | 什么时候用 | 例子 |
+|---|---|---|
+| `evolving` | 能力边界、性能水平、现状、生态格局——会随技术代际变化 | 「开源 LLM 已能在消费级显卡上本地推理」「已有可直接使用的开源实现」 |
+| `timeless` | 理论性质、上下界、已确立的机制性事实 | 「睡眠剥夺损害持续注意力」「约束满足方法能解行程规划」 |
+
+- **判定不了就取 `evolving`**。判错代价不对称：错标 evolving 只是多查一轮，
+  错标 timeless 会让过时结论直接混进最终结论。
+- `evolving` 的 Claim 拿到正向裁决（`supported` / `partially_supported`）时，
+  必须有 `recency_window_years`（默认 2 年，全局在 `state.time_policy`）内的证据，
+  否则 `check` 会拦在 stage 4。
+- 个别 Claim 可以用 `recency_window_years` 覆盖全局窗口（如硬件迭代慢，放宽到 5 年）。
+- 标 `timeless` 时在 `notes` 写一句理由。「懒得补近年检索」不是 `timeless`。
+
 ## 输出
 
 严格按 `schemas/claim.json` 输出 JSON 数组，写入 `state.claims`：
@@ -60,6 +77,7 @@
 - `id`：`C1`、`C2` … 连续编号。
 - `status`：一律 `unknown`。
 - `confidence`：一律 `0.0`。
+- `time_sensitivity`：逐条标 `timeless` / `evolving`（见上表）；判定不了取 `evolving`。
 - `evidence_ids`：空数组（Stage 3 之后才填）。
 - `search_queries`：留空，由 Stage 2 生成。
 
@@ -73,30 +91,37 @@ Idea：**用 LLM Agent 自动做旅游行程动态规划**
 [
   {"id":"C1","statement":"旅行者在实际行程中确实会因天气、闭馆、交通延误等突发事件调整计划",
    "type":"user_problem","importance":"high","status":"unknown","confidence":0.0,
+   "time_sensitivity":"timeless","notes":"长期存在的行为模式，不随技术代际变化",
    "evidence_ids":[],"search_queries":[]},
 
   {"id":"C2","statement":"现有主流行程规划产品不支持行程开始后的动态重排",
    "type":"product","importance":"high","status":"unknown","confidence":0.0,
+   "time_sensitivity":"evolving",
    "evidence_ids":[],"search_queries":[]},
 
   {"id":"C3","statement":"已有研究把 LLM Agent 用于带约束的行程规划（itinerary planning）",
    "type":"technical","importance":"high","status":"unknown","confidence":0.0,
+   "time_sensitivity":"evolving",
    "evidence_ids":[],"search_queries":[]},
 
   {"id":"C4","statement":"约束满足或运筹方法已能解决行程规划问题，无需引入 LLM",
    "type":"scientific","importance":"high","status":"unknown","confidence":0.0,
+   "time_sensitivity":"timeless","notes":"该问题的可解性是算法性质，不随时间变化",
    "evidence_ids":[],"search_queries":[]},
 
   {"id":"C5","statement":"存在面向 C 端、以动态行程调整为卖点的商业化产品",
    "type":"product","importance":"medium","status":"unknown","confidence":0.0,
+   "time_sensitivity":"evolving",
    "evidence_ids":[],"search_queries":[]},
 
   {"id":"C6","statement":"用户愿意为自动行程规划付费",
    "type":"market","importance":"medium","status":"unknown","confidence":0.0,
+   "time_sensitivity":"evolving",
    "evidence_ids":[],"search_queries":[]},
 
   {"id":"C7","statement":"已有工作把 LLM 规划能力与实时外部状态（天气/交通/营业时间）闭环结合",
    "type":"novelty","importance":"high","status":"unknown","confidence":0.0,
+   "time_sensitivity":"evolving",
    "evidence_ids":[],"search_queries":[]}
 ]
 ```
@@ -110,6 +135,7 @@ Idea：**用 LLM Agent 自动做旅游行程动态规划**
 - [ ] 有没有把 Idea 复述成一条 Claim？
 - [ ] 有没有混入 motivation？
 - [ ] 有没有至少一条「若成立则 Idea 不成立」的反向 Claim？
+- [ ] 每条 Claim 都标了 `time_sensitivity`？`timeless` 的有没有写理由？
 
 ## 出口
 

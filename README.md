@@ -4,7 +4,7 @@
 [![stars](https://img.shields.io/github/stars/losseeer/Research-Investigation-Skill?style=social)](https://github.com/losseeer/Research-Investigation-Skill)
 ![PRs](https://img.shields.io/badge/PRs-welcome-brightgreen)
 
-[English](README.en.md) | 中文
+[English](README-en.md) | 中文
 
 ## 这是什么
 
@@ -36,10 +36,12 @@
 - **Novelty 评级**：从 none 到 breakthrough 五档，必须给出依据，不允许「感觉挺新的」这种判断。
 - **可行性分析**：技术瓶颈分为工程问题（堆人能解决）/ 研究问题（方法还没人验证）/ 根本性问题（受能力边界限制）三类，帮你判断难度性质。
 - **成熟度甄别**：区分「有论文」「有代码」「有产品」「验证过市场」——论文存在 ≠ 技术成熟，不会把一个 demo 说成是成熟方案。
+- **全通道都有脚本入口**：学术 / GitHub 走检索脚本；`web` / `product` 由 agent 侧执行后走 `add-evidence`（统一做 schema 校验、E 编号、跨源去重、记额度），不手拼 `evidence.jsonl`。检索脚本在取数前就校验 `--query-id` 存在且通道吻合，不存在的 Q 直接拒绝，不留孤儿条目。
 - **query 级记账**：每条检索都挂在 `search_plans` 的某条 Q 上，配额由「已执行收据」派生，同一条重复执行不重复扣。`by_channel` 计数手写无效——预算花在哪次检索上全程可回溯。
 - **预算档位**：`quick` / `standard` / `deep` 三档，同时控制检索额度与饱和判据阈值（详见「快速开始」第 4 步）。
 - **自动收口**：`stop-check` 按档位阈值判定证据饱和、把 Claim 标记为 stopped 并给出 CONTINUE / FINALIZE 判决；`topk` 按相关度裁剪本轮进上下文的证据（≤10 条）。预算耗尽时强制出报告，不会无限搜索也不会硬凑结论。
-- **14 节调研报告**：从执行摘要、主张清单、已有工作综述，到瓶颈分析、风险声明和建议的下一步，结构完整可直接用于汇报。
+- **时效门禁**：每条 Claim 标注 `timeless`（永真事实：理论性质、上下界、已确立机制）或 `evolving`（能力边界 / 性能 / 现状，会随技术代际变化）。`evolving` Claim 要给出「目前仍成立」的结论，必须有近 2 年内的证据（窗口可按 Claim 或全局调整），否则校验直接拦下——不会让两年前的 LLM 结论冒充今天的现状。
+- **15 节调研报告**：从执行摘要、主张清单、已有工作综述，到瓶颈分析、时效声明、风险声明和建议的下一步，结构完整可直接用于汇报。
 
 ## 使用场景
 
@@ -136,11 +138,17 @@ python3 scripts/validate_state.py init --idea "<idea>" --profile deep
 
 额度在 init 时**拷贝进 state**，之后不受配置文件改动影响；想换档请重新 init。
 
+时效窗口同样在 init 时写入 `state.time_policy`（`as_of` = 当天，`recency_window_years` 默认 2）。慢变领域可放宽：
+
+```bash
+python3 scripts/validate_state.py init --idea "<idea>" --recency-window 5
+```
+
 ### 5. 验证安装（可选）
 
 ```bash
-python3 tests/test_validate_state.py   # 48 项：schema / 预算 / 档位 / query 记账 / 自动饱和 / 写回 / 收口
-python3 tests/test_pipeline.py         # 7 项：全链路离线回归（含 MODIFY / PIVOT 路径）
+python3 tests/test_validate_state.py   # 72 项：schema / 预算 / 档位 / query 记账 / 自动饱和 / 时效门禁 / 写回 / 收口
+python3 tests/test_pipeline.py         # 7 项：全链路离线回归（含 MODIFY / PIVOT 与过时证据拦截）
 ```
 
 更直接的方式：新会话里发起一次小调研（见下一步），看它是否按「拆解 → 取证 → 报告」流程工作。
@@ -166,7 +174,7 @@ Skill 会自动接管整个流程：拆解 Claim → 规划检索 → 多通道�
 research/<idea-slug>/
 ├── research-state.json   # 全量状态：claims、裁决、prior art、预算使用
 ├── evidence.jsonl        # 证据库，一行一条，append-only
-└── report.md             # 14 节调研报告 ← 主要看这个
+└── report.md             # 15 节调研报告 ← 主要看这个
 ```
 
 ## 工作原理速览
@@ -180,14 +188,16 @@ Idea → Claims → 多通道搜索 → Evidence → 逐条裁决
 
 | Stage | 做什么 |
 |---|---|
-| 0–1 | 初始化 state，把 Idea 拆成原子 Claim（≥5 条、≥3 种类型） |
+| 0–1 | 初始化 state，把 Idea 拆成原子 Claim（≥5 条、≥3 种类型，逐条标 `time_sensitivity`） |
 | 2 | 为每条关键 Claim 规划跨通道检索 query（≥3 条） |
 | 3 | 执行检索，归一化为 Evidence（去重、标强度、标成熟度） |
-| 4 | 证据 → 裁决；证据不足的如实标注 `insufficient_evidence` |
+| 4 | 证据 → 裁决；证据不足的如实标注 `insufficient_evidence`；`evolving` Claim 的正向裁决须有窗口内证据 |
 | 5 | Prior Art 比对 + 瓶颈分类 + Novelty 评级 |
 | 6 | 仅基于落盘状态生成报告，不掺入过程性记忆 |
 
 ## TODO
 
-- [ ] 增加时间、上下文和 Fetch 限制。
+- [ ] 增加 Fetch 限制：单次抓取的条数与字节上限，避免长页面把上下文打满。
 - [ ] 优化网络重试、缓存并补充回归测试。
+- [ ] Evidence 级 `as_of`：同一来源多次抓取时记录各次的取回日期（当前只有 Claim 级时效约束）。
+- [ ] GitHub 通道用 `pushed_at` 而非 `created_at` 判断仓库是否仍在维护（现在只用创建年份，会把活跃老仓库误判为过时）。

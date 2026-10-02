@@ -9,6 +9,9 @@
   },
   "status": "init",
   "stage": 0,
+  "time_policy": {
+    "recency_window_years": 2
+  },
   "claims": [],
   "search_plans": [],
   "judgments": [],

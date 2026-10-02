@@ -1,0 +1,30 @@
+{
+  "id": "idea-08",
+  "title": "过时证据冒充现状：2019 年的 LLM 结论直接支撑 2026 年的能力断言",
+  "raw": "想做一个本地运行的开源 LLM 写作助手，查到 2019 年的论文说开源模型已可在消费级显卡上跑，应该可行。",
+  "domain": "llm/local-inference",
+  "expect_pass": false,
+  "expect_fail_stage": 4,
+  "expect_error_contains": ["evolving Claim 但无", "timeless"],
+  "claims": [
+    {"id": "C1", "statement": "开源 LLM 已能在消费级显卡上本地推理并达到可用质量", "type": "technical", "importance": "high", "status": "unknown", "confidence": 0.0, "time_sensitivity": "evolving", "notes": "能力边界类断言：2019 的结论不能证明 2026 仍成立，反之亦然"},
+    {"id": "C2", "statement": "本地 LLM 写作助手有明确的付费意愿", "type": "market", "importance": "high", "status": "unknown", "confidence": 0.0, "time_sensitivity": "evolving"},
+    {"id": "C3", "statement": "本地推理的显存占用是主要工程约束", "type": "application", "importance": "medium", "status": "unknown", "confidence": 0.0, "time_sensitivity": "timeless", "notes": "硬件资源约束属机制性事实"},
+    {"id": "C4", "statement": "已有面向本地运行的模型分发工具链", "type": "product", "importance": "medium", "status": "unknown", "confidence": 0.0, "time_sensitivity": "evolving"},
+    {"id": "C5", "statement": "量化能在几乎不损失质量的前提下降低显存需求", "type": "scientific", "importance": "low", "status": "unknown", "confidence": 0.0, "time_sensitivity": "evolving"}
+  ],
+  "queries": {
+    "C1": ["academic|open source llm consumer gpu inference", "github|local llm inference consumer gpu", "web|消费级显卡 本地 大模型 推理 2025"],
+    "C2": ["web|local ai writing assistant willingness to pay", "product|offline ai writing tool", "web|本地 AI 助手 付费"]
+  },
+  "evidence": [
+    {"channel": "academic", "source_type": "academic", "title": "Language Models are Unsupervised Multitask Learners (GPT-2)", "url": "https://example.com/gpt2", "source": "example.com", "publication_year": 2019, "summary": "1.5B 参数模型可在单卡上推理。", "evidence": "a 1.5B parameter model can run on a single consumer GPU", "claim_ids": ["C1"], "relevance": 0.6, "strength": "medium", "implementation_level": "paper", "changes_judgment": true}
+  ],
+  "judgments": [
+    {"claim_id": "C1", "status": "supported", "confidence": 0.6, "rationale": "E1 显示 2019 年已有可在消费级显卡上运行的开源模型。", "supporting_evidence_ids": ["E1"], "contradicting_evidence_ids": [], "evidence_gaps": "缺近年数据"},
+    {"claim_id": "C2", "status": "insufficient_evidence", "confidence": 0.0, "rationale": "未检索到付费意愿数据。", "supporting_evidence_ids": [], "contradicting_evidence_ids": [], "evidence_gaps": "未执行市场侧检索"}
+  ],
+  "prior_art": [],
+  "analysis": {"motivation": {"problem": "", "who_cares": "", "value": "", "assessment": "unclear"}, "bottlenecks": [], "novelty": {"level": "none", "because": "", "based_on_prior_art_ids": []}},
+  "recommendation": {"verdict": "INSUFFICIENT_EVIDENCE", "rationale": "", "based_on_claim_ids": [], "conditions": []}
+}

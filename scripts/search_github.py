@@ -69,6 +69,13 @@ def main():
         print("FATAL: 传了 --state-dir 就必须传 --query-id（配额按 planned query 记账）",
               file=sys.stderr)
         return 1
+    if args.state_dir:
+        # 闸门必须在取数前：Q 不存在 / 通道不符时一条证据都不许落盘
+        try:
+            vs.require_query(args.state_dir, args.query_id, "github")
+        except ValueError as e:
+            print(f"FATAL: {e}", file=sys.stderr)
+            return 1
 
     claim_ids = [c.strip() for c in args.claim_ids.split(",") if c.strip()]
 

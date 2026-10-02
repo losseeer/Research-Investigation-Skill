@@ -5,11 +5,11 @@
   "domain": "dev/autonomous-coding",
   "expect_pass": true, "expect_verdict": "PIVOT",
   "claims": [
-    {"id": "C1", "statement": "研发团队确实希望减少重复性编码与提交工作", "type": "user_problem", "importance": "high", "status": "unknown", "confidence": 0.0},
-    {"id": "C2", "statement": "Agent 能在无人介入的前提下完成端到端开发任务并通过 CI", "type": "technical", "importance": "high", "status": "unknown", "confidence": 0.0},
-    {"id": "C3", "statement": "已有产品提供全自动软件任务交付能力", "type": "product", "importance": "high", "status": "unknown", "confidence": 0.0},
-    {"id": "C4", "statement": "本方案在技术上无根本性障碍，只是工程量问题", "type": "novelty", "importance": "high", "status": "unknown", "confidence": 0.0},
-    {"id": "C5", "statement": "在「生成 PR 草稿 + 自动补测试」这类受限子任务上，Agent 已被验证有效", "type": "technical", "importance": "high", "status": "unknown", "confidence": 0.0}
+    {"id": "C1", "statement": "研发团队确实希望减少重复性编码与提交工作", "type": "user_problem", "importance": "high", "status": "unknown", "confidence": 0.0, "time_sensitivity": "timeless"},
+    {"id": "C2", "statement": "Agent 能在无人介入的前提下完成端到端开发任务并通过 CI", "type": "technical", "importance": "high", "status": "unknown", "confidence": 0.0, "time_sensitivity": "evolving"},
+    {"id": "C3", "statement": "已有产品提供全自动软件任务交付能力", "type": "product", "importance": "high", "status": "unknown", "confidence": 0.0, "time_sensitivity": "evolving"},
+    {"id": "C4", "statement": "本方案在技术上无根本性障碍，只是工程量问题", "type": "novelty", "importance": "high", "status": "unknown", "confidence": 0.0, "time_sensitivity": "evolving"},
+    {"id": "C5", "statement": "在「生成 PR 草稿 + 自动补测试」这类受限子任务上，Agent 已被验证有效", "type": "technical", "importance": "high", "status": "unknown", "confidence": 0.0, "time_sensitivity": "evolving"}
   ],
   "queries": {
     "C1": ["web|developer survey repetitive coding tasks time", "web|研发 重复性工作 占比 调研", "product|ai coding assistant adoption"],

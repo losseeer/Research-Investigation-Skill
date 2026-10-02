@@ -6,13 +6,13 @@
   "expect_pass": true,
   "expect_verdict": "INSUFFICIENT_EVIDENCE",
   "claims": [
-    {"id": "C1", "statement": "旅行者会因天气、闭馆、延误等突发事件临时调整行程", "type": "user_problem", "importance": "high", "status": "unknown", "confidence": 0.0},
-    {"id": "C2", "statement": "现有主流行程规划产品不支持行程开始后的动态重排", "type": "product", "importance": "high", "status": "unknown", "confidence": 0.0},
-    {"id": "C3", "statement": "已有研究把 LLM 用于带约束的行程规划", "type": "technical", "importance": "high", "status": "unknown", "confidence": 0.0},
-    {"id": "C4", "statement": "约束满足或运筹方法已能解决行程规划，无需引入 LLM", "type": "scientific", "importance": "high", "status": "unknown", "confidence": 0.0},
-    {"id": "C7", "statement": "已有工作把 LLM 规划能力与实时外部状态闭环结合", "type": "novelty", "importance": "high", "status": "unknown", "confidence": 0.0},
-    {"id": "C5", "statement": "存在以动态行程调整为卖点的商业化产品", "type": "product", "importance": "medium", "status": "unknown", "confidence": 0.0},
-    {"id": "C6", "statement": "用户愿意为自动行程规划付费", "type": "market", "importance": "low", "status": "unknown", "confidence": 0.0}
+    {"id": "C1", "statement": "旅行者会因天气、闭馆、延误等突发事件临时调整行程", "type": "user_problem", "importance": "high", "status": "unknown", "confidence": 0.0, "time_sensitivity": "timeless"},
+    {"id": "C2", "statement": "现有主流行程规划产品不支持行程开始后的动态重排", "type": "product", "importance": "high", "status": "unknown", "confidence": 0.0, "time_sensitivity": "evolving"},
+    {"id": "C3", "statement": "已有研究把 LLM 用于带约束的行程规划", "type": "technical", "importance": "high", "status": "unknown", "confidence": 0.0, "time_sensitivity": "evolving"},
+    {"id": "C4", "statement": "约束满足或运筹方法已能解决行程规划，无需引入 LLM", "type": "scientific", "importance": "high", "status": "unknown", "confidence": 0.0, "time_sensitivity": "timeless"},
+    {"id": "C7", "statement": "已有工作把 LLM 规划能力与实时外部状态闭环结合", "type": "novelty", "importance": "high", "status": "unknown", "confidence": 0.0, "time_sensitivity": "evolving"},
+    {"id": "C5", "statement": "存在以动态行程调整为卖点的商业化产品", "type": "product", "importance": "medium", "status": "unknown", "confidence": 0.0, "time_sensitivity": "evolving"},
+    {"id": "C6", "statement": "用户愿意为自动行程规划付费", "type": "market", "importance": "low", "status": "unknown", "confidence": 0.0, "time_sensitivity": "evolving"}
   ],
   "queries": {
     "C1": ["web|旅行中临时改行程 用户行为 调研", "web|travel plan disruption weather closure survey", "academic|travel itinerary disruption uncertainty"],

@@ -36,10 +36,12 @@ Every conclusion in the report carries evidence IDs, so you can trace each one b
 - **Novelty rating** — Five levels from `none` to `breakthrough`, always with a justification that cites evidence — no "feels pretty novel" judgments.
 - **Feasibility analysis** — Technical bottlenecks are classified as engineering (solvable with effort) / research (method unproven, needs experiments) / fundamental (bounded by existing theory or capabilities), so you know what kind of difficulty you're facing.
 - **Maturity discrimination** — Distinguishes "there's a paper" from "there's code" from "there's a product" from "the market validated it." A paper existing ≠ the technology is mature; a demo never gets described as a production-ready solution.
+- **Scripted entry for every channel** — Academic / GitHub go through the search scripts; `web` / `product` results (executed agent-side) go through `add-evidence`, which applies schema validation, `E` numbering, cross-source dedupe and budget accounting in one place instead of hand-assembling `evidence.jsonl`. Search scripts validate `--query-id` *before* fetching, refusing unknown queries outright so no orphan evidence is ever written.
 - **Per-query accounting** — Every search is tied to a specific `Q` in `search_plans`; budget counts are derived from execution receipts, and re-running the same query is never charged twice. Hand-written per-channel counters are rejected, so every unit of budget stays traceable to a query.
 - **Budget profiles** — `quick` / `standard` / `deep`, controlling both the search caps and the saturation thresholds (see Quick Start step 4).
 - **Automatic closure** — `stop-check` applies the profile thresholds, marks saturated Claims as stopped, and issues a CONTINUE / FINALIZE verdict; `topk` trims the evidence admitted into context this round (≤10 items). When the budget runs out, the report is still produced — with undecidable claims honestly marked, never force-fitted.
-- **14-section research report** — From executive summary, claim list, and existing-work review to bottleneck analysis, risk disclosure, and recommended next steps — ready to present as-is.
+- **Timeliness gate** — Each Claim is tagged `timeless` (theoretical properties, bounds, established mechanisms) or `evolving` (capability frontiers, performance, current state of the art). An `evolving` Claim cannot be judged "still holds today" without evidence inside the recency window (2 years by default, tunable per claim or globally) — validation rejects it outright, so a two-year-old LLM result can't masquerade as today's reality.
+- **15-section research report** — From executive summary, claim list, and existing-work review to bottleneck analysis, time coverage, risk disclosure, and recommended next steps — ready to present as-is.
 
 ## Use Cases
 
@@ -136,11 +138,17 @@ python3 scripts/validate_state.py init --idea "<idea>" --profile deep
 
 Limits are **copied into the state at init time**, so later edits to the config file do not affect an existing investigation — re-init to switch profiles.
 
+The recency window is written into `state.time_policy` at init (`as_of` = today, `recency_window_years` = 2 by default). Widen it for slow-moving fields:
+
+```bash
+python3 scripts/validate_state.py init --idea "<idea>" --recency-window 5
+```
+
 ### 5. Verify the installation (optional)
 
 ```bash
-python3 tests/test_validate_state.py   # 48 checks: schema / budget / profiles / query accounting / auto-saturation / merge / finalize
-python3 tests/test_pipeline.py         # 7 checks: full offline pipeline regression (incl. MODIFY / PIVOT paths)
+python3 tests/test_validate_state.py   # 72 checks: schema / budget / profiles / query accounting / auto-saturation / timeliness gate / merge / finalize
+python3 tests/test_pipeline.py         # 7 checks: full offline pipeline regression (incl. MODIFY / PIVOT paths and stale-evidence rejection)
 ```
 
 Or more directly: start a small investigation in a fresh session (next step) and see whether it follows the decompose → gather → report flow.
@@ -166,7 +174,7 @@ Output lands under `research/<idea-slug>/` in the current project:
 research/<idea-slug>/
 ├── research-state.json   # Full state: claims, judgments, prior art, budget usage
 ├── evidence.jsonl        # Evidence store, one entry per line, append-only
-└── report.md             # 14-section research report ← start here
+└── report.md             # 15-section research report ← start here
 ```
 
 ## How It Works
@@ -180,14 +188,16 @@ Six stages (each stage exit is gated by automatic validation — failure blocks 
 
 | Stage | What happens |
 |---|---|
-| 0–1 | Initialize state; decompose the idea into atomic Claims (≥5 claims, ≥3 types) |
+| 0–1 | Initialize state; decompose the idea into atomic Claims (≥5 claims, ≥3 types), tagging each with `time_sensitivity` |
 | 2 | Plan cross-channel queries for each critical Claim (≥3 each) |
 | 3 | Run searches; normalize results into Evidence (dedupe, strength, maturity) |
-| 4 | Evidence → judgment; claims without evidence are honestly marked `insufficient_evidence` |
+| 4 | Evidence → judgment; claims without evidence are honestly marked `insufficient_evidence`; positive verdicts on `evolving` claims require in-window evidence |
 | 5 | Prior Art comparison + bottleneck classification + novelty rating |
 | 6 | Report generated from on-disk state only — no transient context leaks in |
 
 ## TODO
 
-- [ ] Add time, context, and fetch limits.
+- [ ] Add fetch limits (max items / bytes per fetch) so long pages stop flooding the context.
 - [ ] Optimize retries and caching, and add regression tests.
+- [ ] Evidence-level `as_of`: record retrieval dates per source (today only Claim-level timeliness is enforced).
+- [ ] GitHub channel should use `pushed_at` rather than `created_at` to judge whether a repo is still maintained (today it misjudges active old repos as stale).

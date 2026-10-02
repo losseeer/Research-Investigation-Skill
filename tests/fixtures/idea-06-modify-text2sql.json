@@ -6,11 +6,11 @@
   "expect_pass": true,
   "expect_verdict": "MODIFY",
   "claims": [
-    {"id": "C1", "statement": "业务人员存在自助取数、不愿排队等数据团队的真实需求", "type": "user_problem", "importance": "high", "status": "unknown", "confidence": 0.0},
-    {"id": "C2", "statement": "LLM 已能把自然语言转成语法正确的 SQL", "type": "technical", "importance": "high", "status": "unknown", "confidence": 0.0},
-    {"id": "C3", "statement": "在企业真实的多表复杂 schema 上，生成 SQL 的准确率足以直接交付业务使用", "type": "technical", "importance": "high", "status": "unknown", "confidence": 0.0},
-    {"id": "C4", "statement": "已有面向业务人员的自助取数产品覆盖该场景", "type": "product", "importance": "high", "status": "unknown", "confidence": 0.0},
-    {"id": "C5", "statement": "LLM 生成的 SQL 存在执行正确但口径错误的风险，需要人工或规则校验", "type": "scientific", "importance": "medium", "status": "unknown", "confidence": 0.0}
+    {"id": "C1", "statement": "业务人员存在自助取数、不愿排队等数据团队的真实需求", "type": "user_problem", "importance": "high", "status": "unknown", "confidence": 0.0, "time_sensitivity": "timeless", "notes": "需求侧的长期痛点，不随技术代际变化"},
+    {"id": "C2", "statement": "LLM 已能把自然语言转成语法正确的 SQL", "type": "technical", "importance": "high", "status": "unknown", "confidence": 0.0, "time_sensitivity": "evolving"},
+    {"id": "C3", "statement": "在企业真实的多表复杂 schema 上，生成 SQL 的准确率足以直接交付业务使用", "type": "technical", "importance": "high", "status": "unknown", "confidence": 0.0, "time_sensitivity": "evolving", "notes": "准确率类断言逐年变化，只拿 2023 的 BIRD 数据不足以说「现在仍成立」"},
+    {"id": "C4", "statement": "已有面向业务人员的自助取数产品覆盖该场景", "type": "product", "importance": "high", "status": "unknown", "confidence": 0.0, "time_sensitivity": "evolving"},
+    {"id": "C5", "statement": "LLM 生成的 SQL 存在执行正确但口径错误的风险，需要人工或规则校验", "type": "scientific", "importance": "medium", "status": "unknown", "confidence": 0.0, "time_sensitivity": "evolving"}
   ],
   "queries": {
     "C1": ["web|business user self-service analytics pain point survey", "web|业务人员 自助取数 需求 调研", "product|self-service BI natural language query"],
@@ -25,30 +25,31 @@
     {"channel": "github", "source_type": "github", "title": "eosphoros-ai/Awesome-Text2SQL", "url": "https://github.com/eosphoros-ai/Awesome-Text2SQL", "source": "eosphoros-ai", "publication_year": 2024, "summary": "★10k+ · text2SQL 模型与数据集索引清单。", "evidence": "curated list of text-to-SQL datasets, models and tools", "claim_ids": ["C2"], "relevance": 0.8, "strength": "medium", "implementation_level": "code", "changes_judgment": false},
     {"channel": "academic", "source_type": "academic", "title": "BIRD: Can LLM-Enabled Text-to-SQL Run in the Real World?", "url": "https://doi.org/10.48550/arxiv.2305.03111", "source": "arXiv", "publication_year": 2023, "summary": "大规模真实库场景评测，GPT-4 执行准确率约 55%。", "evidence": "even GPT-4 achieves only 54.89% execution accuracy on BIRD benchmark", "claim_ids": ["C3"], "relevance": 0.95, "strength": "high", "implementation_level": "paper", "changes_judgment": true},
     {"channel": "product", "source_type": "product", "title": "自然语言取数 BI 产品", "url": "https://example.com/nl-query-bi", "source": "example.com", "publication_year": 2025, "summary": "多家 BI 厂商已提供自然语言提问取数功能。", "evidence": "内置 AI assistant，支持用自然语言生成查询与图表", "claim_ids": ["C4"], "relevance": 0.8, "strength": "medium", "implementation_level": "commercial_product", "changes_judgment": true},
-    {"channel": "academic", "source_type": "academic", "title": "语义正确但口径错误的 SQL 评估", "url": "https://example.com/sql-semantic-error", "source": "example.com", "publication_year": 2024, "summary": "执行成功不等于口径正确，业务语义错位是主要失效模式。", "evidence": "executable SQL may still violate intended business logic constraints", "claim_ids": ["C5"], "relevance": 0.7, "strength": "medium", "implementation_level": "paper", "changes_judgment": true}
+    {"channel": "academic", "source_type": "academic", "title": "语义正确但口径错误的 SQL 评估", "url": "https://example.com/sql-semantic-error", "source": "example.com", "publication_year": 2024, "summary": "执行成功不等于口径正确，业务语义错位是主要失效模式。", "evidence": "executable SQL may still violate intended business logic constraints", "claim_ids": ["C5"], "relevance": 0.7, "strength": "medium", "implementation_level": "paper", "changes_judgment": true},
+    {"channel": "academic", "source_type": "academic", "title": "企业级 schema 上的 text-to-SQL 复评（2025）", "url": "https://example.com/enterprise-text2sql-2025", "source": "example.com", "publication_year": 2025, "summary": "两年后复评：最强模型在企业级多表 schema 上执行准确率仍仅约 65%。", "evidence": "execution accuracy on enterprise-scale schemas remains around 65%, still below the bar for unattended business delivery", "claim_ids": ["C3"], "relevance": 0.9, "strength": "high", "implementation_level": "paper", "changes_judgment": true}
   ],
   "judgments": [
     {"claim_id": "C1", "status": "supported", "confidence": 0.7, "rationale": "E1 表明业务侧临时取数等待数据团队排期是普遍痛点，属行业调研而非单例意见。", "supporting_evidence_ids": ["E1"], "contradicting_evidence_ids": [], "evidence_gaps": ""},
     {"claim_id": "C2", "status": "supported", "confidence": 0.85, "rationale": "E2/E3 显示 benchmark 与开源实现均已成熟，模型在标准数据集上能产出语法正确的 SQL。", "supporting_evidence_ids": ["E2", "E3"], "contradicting_evidence_ids": [], "evidence_gaps": ""},
-    {"claim_id": "C3", "status": "partially_supported", "confidence": 0.5, "rationale": "E4 显示真实企业库上最强模型执行准确率仅约 55%，远未到可直接交付业务；E2 支持其在标准数据集上可行。二者共同指向「限定 schema 范围后才可用」。", "supporting_evidence_ids": ["E2"], "contradicting_evidence_ids": ["E4"], "evidence_gaps": "缺少按 schema 复杂度分组的准确率数据，无法划出可交付边界"},
+    {"claim_id": "C3", "status": "partially_supported", "confidence": 0.5, "rationale": "E4（2023）显示真实企业库上最强模型执行准确率仅约 55%；E7（2025）复评表明两年后仍只有约 65%，远未到可直接交付业务。E2 支持其在标准数据集上可行。三者共同指向「限定 schema 范围后才可用」。", "supporting_evidence_ids": ["E2"], "contradicting_evidence_ids": ["E4", "E7"], "evidence_gaps": "缺少按 schema 复杂度分组的准确率数据，无法划出可交付边界"},
     {"claim_id": "C4", "status": "supported", "confidence": 0.8, "rationale": "E5 表明 BI 厂商已把自然语言取数做成产品功能。", "supporting_evidence_ids": ["E5"], "contradicting_evidence_ids": [], "evidence_gaps": ""},
     {"claim_id": "C5", "status": "supported", "confidence": 0.7, "rationale": "E6 指出执行成功不等于口径正确，属需显式建模的失效模式。", "supporting_evidence_ids": ["E6"], "contradicting_evidence_ids": [], "evidence_gaps": ""}
   ],
   "prior_art": [
-    {"id": "P1", "title": "Spider / BIRD 等 text-to-SQL benchmark 与基线模型", "url": "https://doi.org/10.48550/arxiv.1809.08887", "kind": "academic", "similarity": "highly_similar", "dimension": "method", "difference": "这些工作只做到「给定 schema 生成 SQL」，不含面向业务人员的口径校验与可解释回溯。", "evidence_ids": ["E2", "E4"]},
+    {"id": "P1", "title": "Spider / BIRD 等 text-to-SQL benchmark 与基线模型", "url": "https://doi.org/10.48550/arxiv.1809.08887", "kind": "academic", "similarity": "highly_similar", "dimension": "method", "difference": "这些工作只做到「给定 schema 生成 SQL」，不含面向业务人员的口径校验与可解释回溯。", "evidence_ids": ["E2", "E4", "E7"]},
     {"id": "P2", "title": "BI 厂商内置的自然语言取数助手", "url": "https://example.com/nl-query-bi", "kind": "product", "similarity": "highly_similar", "dimension": "system", "difference": "已覆盖通用问答式取数，但未针对企业私有 schema 的口径约束做校验闭环。", "evidence_ids": ["E5"]}
   ],
   "analysis": {
     "motivation": {"problem": "业务人员取数需排队等待数据团队", "who_cares": "业务团队与数据分析师", "value": "缩短取数等待时间", "assessment": "moderate"},
     "bottlenecks": [
-      {"id": "B1", "description": "复杂 schema 上 SQL 准确率不足（约 55% 执行准确率）", "bottleneck_type": "research", "severity": "high", "evidence_ids": ["E4"]},
+      {"id": "B1", "description": "复杂 schema 上 SQL 准确率不足（2023 约 55%，2025 复评仍仅约 65%）", "bottleneck_type": "research", "severity": "high", "evidence_ids": ["E4", "E7"]},
       {"id": "B2", "description": "口径校验缺失导致「能跑但算错」", "bottleneck_type": "engineering", "severity": "high", "evidence_ids": ["E6"]}
     ],
     "novelty": {"level": "incremental", "because": "P1/P2 的 difference 均指向「没有口径校验闭环」，故只在 evaluation 与 system 维度存在增量；核心生成能力属直接复用。", "based_on_prior_art_ids": ["P1", "P2"]}
   },
   "recommendation": {
     "verdict": "MODIFY",
-    "rationale": "C1/C2 支持方向成立，但 C3 仅 partially_supported：通吃任意 schema 不成立。收窄到预先治理过的有限宽表 + 强制口径校验层后可做，否则会退化成「看似能用实则算错」。",
+    "rationale": "C1/C2 支持方向成立，但 C3 仅 partially_supported：2023 与 2025 两次评测都显示复杂 schema 上准确率不足以通吃，结论未随时间失效。收窄到预先治理过的有限宽表 + 强制口径校验层后可做，否则会退化成「看似能用实则算错」。",
     "based_on_claim_ids": ["C1", "C2", "C3", "C4", "C5"],
     "conditions": ["限定支持的 schema 范围（先做治理过的宽表，不支持任意多表 join）", "上线前必须有口径校验/人工确认环节，禁止直接出数", "补齐按 schema 复杂度分组的准确率评测后再决定是否扩面"]
   }

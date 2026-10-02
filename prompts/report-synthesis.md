@@ -41,7 +41,7 @@ python3 scripts/validate_state.py merge <dir> --data '{
 
 ## 第二步：按模板填报告
 
-模板：`assets/report-template.md`，14 节结构固定，不增删、不调序。
+模板：`assets/report-template.md`，15 节结构固定，不增删、不调序。
 
 各节的取材：
 
@@ -49,7 +49,7 @@ python3 scripts/validate_state.py merge <dir> --data '{
 |---|---|
 | 1 Executive Summary | recommendation + novelty + 核心 Claim 裁决 |
 | 2 Idea Reconstruction | `idea.raw` / `idea.domain` / `idea.constraints` |
-| 3 Core Claims | `claims` + `judgments`（含 `evidence_gaps`） |
+| 3 Core Claims | `claims` + `judgments`（含 `evidence_gaps` 与 `time_sensitivity`） |
 | 4 Existing Academic Work | `source_type == academic` 的 Evidence |
 | 5 Prior Art Analysis | `prior_art` + 四维度比较矩阵 |
 | 6 Scientific Support | `type == scientific` 的 Claim 裁决 |
@@ -57,19 +57,31 @@ python3 scripts/validate_state.py merge <dir> --data '{
 | 8 Motivation & Application Value | `analysis.motivation` |
 | 9 Technical Bottlenecks | `analysis.bottlenecks` |
 | 10 Novelty Analysis | `analysis.novelty` |
-| 11 Risks | `unavailable_channels` + 低强度证据 + research/fundamental 瓶颈 |
-| 12 Recommendation | `recommendation` |
-| 13 Suggested Next Steps | 未裁决的 high Claim 的 `evidence_gaps` |
-| 14 Evidence | `relevance >= 0.6` 的全部条目 |
+| 11 Time Coverage | `time_policy` + 每个 Claim 的 `time_sensitivity` 与其证据年份 |
+| 12 Risks | `unavailable_channels` + 时效缺口 + 低强度证据 + research/fundamental 瓶颈 |
+| 13 Recommendation | `recommendation` |
+| 14 Suggested Next Steps | 未裁决的 high Claim 的 `evidence_gaps` |
+| 15 Evidence | `relevance >= 0.6` 的全部条目 |
+
+### §11 怎么写
+
+`as_of` 与窗口取自 `state.time_policy`（缺字段时是「今天 + 默认 2 年」）。
+对每个给出正向裁决（`supported` / `partially_supported`）的 Claim 交代：
+
+- `evolving`：窗口内有几条证据、最新是哪一年。没有窗口内证据的，`check` 已在 stage 4 拦下，
+  这里应写「结论只对到 X 年成立」而不是含糊带过。
+- `timeless`：写出它为什么是永真事实（理论性质 / 上下界 / 已确立的机制性事实），
+  引 Claim 的 `notes`。
 
 ## 写作约束
 
 - **每条结论后面跟 Claim ID 或 Evidence ID**。写不出来的，说明它在 state 里没有依据——删掉。
 - `implementation_level` 严格按 state 里的值陈述。`code` 就是「有代码」，
   不许写成「已有成熟产品」。
-- §11 覆盖缺口**必填**：把 `unavailable_channels` 的通道、未执行的查询方向、
+- §12 覆盖缺口**必填**：把 `unavailable_channels` 的通道、未执行的查询方向、
   以及因此可能遗漏的工作都写出来。这是「通道不可用 ≠ 没有 prior work」的落地位置。
 - §9 的结论（工程问题 vs 研究问题）取 `severity == high` 的瓶颈中类型最严重的一档。
+- 现状措辞（「目前 / 现在 / 已能 / 仍是」）只能用在 `evolving` 且有窗口内证据的 Claim 上。
 - 不要为了读起来顺畅而补 state 里没有的因果、规模数字或时间线。
 
 ## 输出
@@ -79,7 +91,8 @@ python3 scripts/validate_state.py merge <dir> --data '{
 ## 自检
 
 - [ ] 报告里每句话都能在 state / evidence 里找到出处？
-- [ ] §11 有没有写覆盖缺口？
+- [ ] §12 有没有写覆盖缺口？
+- [ ] §11 有没有交代 as_of / 窗口，以及每条 evolving Claim 的窗口内证据？
 - [ ] §3 里 `insufficient_evidence` 的 Claim 有没有说明「为什么没查到」？
 - [ ] §7 有没有把 `code` 写成产品？
 - [ ] Recommendation 的判定优先级用对了（contradicted 压过一切）？

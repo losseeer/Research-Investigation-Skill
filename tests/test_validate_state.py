@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -38,6 +39,9 @@ def write_state(d: Path, state, evidence=()):
     )
 
 
+THIS_YEAR = datetime.now().year
+
+
 def ev(eid, claim_ids, **kw):
     base = {
         "id": eid, "channel": "academic", "source_type": "academic",
@@ -45,6 +49,15 @@ def ev(eid, claim_ids, **kw):
         "relevance": 0.8, "strength": "medium", "implementation_level": "paper",
         "claim_ids": claim_ids, "changes_judgment": False,
     }
+    base.update(kw)
+    return base
+
+
+def claim(cid, **kw):
+    """默认 timeless：饱和/门禁类测试只关心判据本身，时效行为由 TestTimeliness 覆盖。"""
+    base = {"id": cid, "statement": "x", "type": "technical", "importance": "high",
+            "status": "unknown", "confidence": 0.0, "evidence_ids": [],
+            "time_sensitivity": "timeless"}
     base.update(kw)
     return base
 
@@ -121,8 +134,8 @@ class TestCrossCheck(unittest.TestCase):
 
     def test_valid_state_passes(self):
         state = empty_state(
-            claims=[{"id": "C1", "statement": "x", "type": "technical", "importance": "high",
-                     "status": "supported", "confidence": 0.8, "evidence_ids": ["E1"]}],
+            claims=[claim("C1", status="supported", confidence=0.8, evidence_ids=["E1"],
+                          time_sensitivity="evolving")],
             judgments=[{"claim_id": "C1", "status": "supported", "confidence": 0.8,
                         "rationale": "E1", "supporting_evidence_ids": ["E1"],
                         "contradicting_evidence_ids": []}],
@@ -135,7 +148,7 @@ class TestCrossCheck(unittest.TestCase):
         )
         state["search_budget"]["executed_queries"] = ["Q1", "Q2"]
         vs.sync_budget(state)
-        errs, warns = self._run(state, [ev("E1", ["C1"])])
+        errs, warns = self._run(state, [ev("E1", ["C1"], publication_year=THIS_YEAR)])
         self.assertEqual(errs, [])
         self.assertEqual(warns, [])
 
@@ -387,9 +400,7 @@ class TestBudgetAndSaturation(unittest.TestCase):
         self.assertTrue(any("不一致" in e for e in errs))
 
     def test_saturation_detects_independence(self):
-        state = empty_state(claims=[{"id": "C1", "statement": "x", "type": "technical",
-                                     "importance": "high", "status": "unknown",
-                                     "confidence": 0.0, "evidence_ids": []}])
+        state = empty_state(claims=[claim("C1")])
         evidence = [
             ev("E1", ["C1"], source="Nature"),
             ev("E2", ["C1"], source="IEEE", source_type="github", channel="github"),
@@ -400,9 +411,7 @@ class TestBudgetAndSaturation(unittest.TestCase):
         self.assertEqual(rows[0]["independent"], 3)
 
     def test_saturation_detects_duplicates(self):
-        state = empty_state(claims=[{"id": "C1", "statement": "x", "type": "technical",
-                                     "importance": "high", "status": "unknown",
-                                     "confidence": 0.0, "evidence_ids": []}])
+        state = empty_state(claims=[claim("C1")])
         evidence = [ev("E1", ["C1"], url="https://same"), ev("E2", ["C1"], url="https://same"),
                     ev("E3", ["C1"], url="https://same")]
         rows = vs.saturation_rows(state, evidence)
@@ -542,9 +551,7 @@ class TestBudgetProfiles(unittest.TestCase):
             {"id": "E2", "url": "https://b.example/y", "source": "b",
              "source_type": "github", "claim_ids": ["C1"], "title": "t2"},
         ]
-        claims = [{"id": "C1", "statement": "s", "type": "technical",
-                   "importance": "high", "status": "unknown", "confidence": 0.0,
-                   "evidence_ids": [], "search_queries": []}]
+        claims = [claim("C1", statement="s", search_queries=[])]
 
         _d, st_quick = self._init("quick")
         st_quick["claims"] = claims
@@ -588,9 +595,7 @@ class TestAutoSaturationAndTopK(unittest.TestCase):
 
     def test_stop_check_marks_stopped_and_finalizes(self):
         """3 条独立证据 + 独立证据达阈值 → 该 Claim 自动 stopped，循环判 FINALIZE。"""
-        st = self._state(claims=[{"id": "C1", "statement": "x", "type": "technical",
-                                  "importance": "high", "status": "unknown",
-                                  "confidence": 0.0, "evidence_ids": []}],
+        st = self._state(claims=[claim("C1")],
                          search_plans=[{"claim_id": "C1", "queries": [
                              {"id": "Q1", "channel": "pending_ch", "query": "q"}]}])
         st["search_plans"] = [{"claim_id": "C1", "queries": [
@@ -639,9 +644,7 @@ class TestAutoSaturationAndTopK(unittest.TestCase):
 
     def test_stop_check_honors_profile_threshold(self):
         """quick 档面对 2 条独立证据应判饱和并 FINALIZE。"""
-        st = self._state(claims=[{"id": "C1", "statement": "x", "type": "technical",
-                                  "importance": "high", "status": "unknown",
-                                  "confidence": 0.0, "evidence_ids": []}])
+        st = self._state(claims=[claim("C1")])
         st["search_plans"] = []
         st["search_budget"]["profile"] = "quick"
         st["search_budget"]["saturation"] = {"min_independent": 2,
@@ -677,6 +680,320 @@ class TestAutoSaturationAndTopK(unittest.TestCase):
         with self.assertRaises(SystemExit) as ctx:
             vs.cmd_topk(SimpleNamespace(dir=str(self.dir), claim=None, k=11, min_relevance=0.6))
         self.assertIn("10", str(ctx.exception))
+
+
+class TestPlanSafetyAndEvidenceEntry(unittest.TestCase):
+    """三处事故的结构性修复：plan 增量追加 / merge 不许静默删 / 脚本 lone evidence 入口。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _plan_state(self):
+        st = empty_state(
+            claims=[{"id": "C3", "statement": "x", "type": "technical", "importance": "high",
+                     "status": "unknown", "confidence": 0.0, "evidence_ids": []}],
+            search_plans=[{"claim_id": "C3", "queries": [
+                {"id": "Q1", "channel": "academic", "query": "old a", "status": "pending"},
+                {"id": "Q2", "channel": "web", "query": "old b", "status": "pending"}]}])
+        write_state(self.dir, st)
+        return st
+
+    # --- 事故 1：merge 增量补 plan 会整条替换 queries ---------------------
+    def test_merge_full_plan_is_still_allowed(self):
+        """传全量时 merge 照旧可用——不能为了防误删把正常用法也堵死。"""
+        self._plan_state()
+        rc = vs.cmd_merge(SimpleNamespace(
+            dir=str(self.dir),
+            data=json.dumps({"search_plans": [{"claim_id": "C3", "queries": [
+                {"id": "Q1", "channel": "academic", "query": "old a", "status": "pending"},
+                {"id": "Q2", "channel": "web", "query": "old b", "status": "pending"},
+                {"id": "Q3", "channel": "github", "query": "new c"}]}]})))
+        self.assertEqual(rc, 0)
+        st, _ = vs.load_state(self.dir)
+        self.assertEqual([q["id"] for q in st["search_plans"][0]["queries"]], ["Q1", "Q2", "Q3"])
+
+    def test_merge_refuses_partial_plan_that_drops_queries(self):
+        """缺了已有 Q 就视为误删：拒绝写入，state 保持原样。"""
+        self._plan_state()
+        rc = vs.cmd_merge(SimpleNamespace(
+            dir=str(self.dir),
+            data=json.dumps({"search_plans": [{"claim_id": "C3", "queries": [
+                {"id": "Q26", "channel": "github", "query": "brand new"}]}]})))
+        self.assertEqual(rc, 1)
+        st, _ = vs.load_state(self.dir)
+        self.assertEqual([q["id"] for q in st["search_plans"][0]["queries"]], ["Q1", "Q2"])
+
+    def test_add_queries_appends_without_touching_existing(self):
+        self._plan_state()
+        rc = vs.cmd_add_queries(SimpleNamespace(
+            dir=str(self.dir),
+            data=json.dumps({"claim_id": "C3", "queries": [
+                {"channel": "github", "query": "new c"}]})))
+        self.assertEqual(rc, 0)
+        st, _ = vs.load_state(self.dir)
+        self.assertEqual([q["id"] for q in st["search_plans"][0]["queries"]], ["Q1", "Q2", "Q3"])
+
+    def test_add_queries_is_idempotent_by_qid(self):
+        """同 id 再补一次是合并字段，不会挤出第二条。"""
+        self._plan_state()
+        patch = {"claim_id": "C3", "queries": [
+            {"id": "Q2", "channel": "web", "query": "renamed"},
+            {"id": "Q9", "channel": "github", "query": "another"}]}
+        vs.cmd_add_queries(SimpleNamespace(dir=str(self.dir), data=json.dumps(patch)))
+        vs.cmd_add_queries(SimpleNamespace(dir=str(self.dir), data=json.dumps(patch)))
+        st, _ = vs.load_state(self.dir)
+        qs = {q["id"]: q for q in st["search_plans"][0]["queries"]}
+        self.assertEqual(sorted(qs), ["Q1", "Q2", "Q9"])
+        self.assertEqual(qs["Q2"]["query"], "renamed")
+
+    def test_add_queries_creates_plan_and_rejects_bad_channel(self):
+        self._plan_state()
+        vs.cmd_add_queries(SimpleNamespace(
+            dir=str(self.dir),
+            data=json.dumps({"claim_id": "C9", "queries": [{"channel": "web", "query": "x"}]})))
+        st, _ = vs.load_state(self.dir)
+        self.assertEqual(len(st["search_plans"]), 2)
+        with self.assertRaises(SystemExit):
+            vs.cmd_add_queries(SimpleNamespace(
+                dir=str(self.dir),
+                data=json.dumps({"claim_id": "C3", "queries": [{"channel": "bogus", "query": "x"}]})))
+
+    # --- 事故 2：query_id 不存在 → 不许留下孤儿证据 ----------------------
+    def test_append_evidence_refuses_unknown_query_id(self):
+        self._plan_state()
+        items = [{"title": "t", "url": "https://example.com/a", "source_type": "web",
+                  "summary": "s", "relevance": 0.6, "strength": "medium",
+                  "implementation_level": "production"}]
+        with self.assertRaises(ValueError) as ctx:
+            vs.append_evidence(self.dir, items, "web", query_id="Q99")
+        self.assertIn("Q99", str(ctx.exception))
+        evidence, _bad = vs.load_evidence(self.dir)
+        self.assertEqual(evidence, [], "拒绝时必须一条都不写")
+
+    def test_require_query_checks_existence_and_channel(self):
+        self._plan_state()
+        self.assertTrue(vs.require_query(self.dir, "Q1", "academic"))
+        with self.assertRaises(ValueError):
+            vs.require_query(self.dir, "Q1", "github")   # 规划通道不吻合
+        with self.assertRaises(ValueError):
+            vs.require_query(self.dir, "Q404")
+
+    # --- 事故 3：web / product 通道没有脚本入口 --------------------------
+    def _web_items(self):
+        return [{"title": "某产品官网", "url": "https://example.com/p1", "source_type": "product",
+                 "summary": "提供该功能", "evidence": "supports X", "claim_ids": ["C3"],
+                 "relevance": 0.7, "strength": "medium",
+                 "implementation_level": "commercial_product"}]
+
+    def test_add_evidence_writes_validated_entries(self):
+        self._plan_state()
+        rc = vs.cmd_add_evidence(SimpleNamespace(
+            dir=str(self.dir), channel="web", query_id="Q2", data=json.dumps(self._web_items())))
+        self.assertEqual(rc, 0)
+        evidence, _bad = vs.load_evidence(self.dir)
+        self.assertEqual(len(evidence), 1)
+        self.assertEqual(evidence[0]["id"], "E1")
+        self.assertEqual(evidence[0]["channel"], "web")
+        self.assertEqual(evidence[0]["query_id"], "Q2")
+        st, _ = vs.load_state(self.dir)
+        self.assertEqual(st["search_budget"]["by_channel"]["web"]["results"], 1)
+
+    def test_add_evidence_dedupes_and_charges_only_new(self):
+        self._plan_state()
+        args = SimpleNamespace(dir=str(self.dir), channel="web", query_id="Q2",
+                               data=json.dumps(self._web_items()))
+        vs.cmd_add_evidence(args)
+        vs.cmd_add_evidence(args)   # 同 URL 再喂一次
+        evidence, _bad = vs.load_evidence(self.dir)
+        self.assertEqual(len(evidence), 1)
+        st, _ = vs.load_state(self.dir)
+        self.assertEqual(st["search_budget"]["by_channel"]["web"]["results"], 1)
+
+    def test_add_evidence_writes_nothing_when_any_item_invalid(self):
+        """一条不合法就全部驳回——避免「大部分有效 + 少量脏数据」混着落盘。"""
+        self._plan_state()
+        items = self._web_items() + [{"title": "缺字段的脏数据", "url": "https://example.com/p2"}]
+        rc = vs.cmd_add_evidence(SimpleNamespace(
+            dir=str(self.dir), channel="web", query_id="Q2", data=json.dumps(items)))
+        self.assertEqual(rc, 1)
+        evidence, _bad = vs.load_evidence(self.dir)
+        self.assertEqual(evidence, [])
+
+    def test_add_evidence_rejects_unknown_claim_and_query(self):
+        self._plan_state()
+        bad = self._web_items()
+        bad[0]["claim_ids"] = ["C404"]
+        rc = vs.cmd_add_evidence(SimpleNamespace(dir=str(self.dir), channel="web",
+                                                 query_id="Q2", data=json.dumps(bad)))
+        self.assertEqual(rc, 1)
+        rc2 = vs.cmd_add_evidence(SimpleNamespace(dir=str(self.dir), channel="web",
+                                                  query_id="Q77", data=json.dumps(self._web_items())))
+        self.assertEqual(rc2, 1)
+        evidence, _bad = vs.load_evidence(self.dir)
+        self.assertEqual(evidence, [])
+
+    def test_add_evidence_reads_from_file(self):
+        self._plan_state()
+        f = self.dir / "items.json"
+        f.write_text(json.dumps(self._web_items()), encoding="utf-8")
+        rc = vs.cmd_add_evidence(SimpleNamespace(dir=str(self.dir), channel="product",
+                                                 query_id=None, data=None, file=str(f)))
+        self.assertEqual(rc, 0)
+        evidence, _bad = vs.load_evidence(self.dir)
+        self.assertEqual(evidence[0]["channel"], "product")
+
+
+class TestTimeliness(unittest.TestCase):
+    """时效性：Claim 级 time_sensitivity + 全局窗口。旧结论不能冒充「现在仍成立」。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _supported(self, cid, **kw):
+        return claim(cid, status="supported", confidence=0.7, evidence_ids=["E1"], **kw)
+
+    def _errors(self, state, evidence):
+        errs, warns = [], []
+        vs.cross_check(state, evidence, errs, warns)
+        return errs, warns
+
+    # --- 门禁 -------------------------------------------------------------
+    def test_evolving_claim_with_only_old_evidence_is_error(self):
+        """LLM 这类快变领域：2020 的证据不能支撑 2026 的「仍成立」。"""
+        state = empty_state(claims=[self._supported("C1", time_sensitivity="evolving")],
+                            time_policy={"as_of": f"{THIS_YEAR}-01-01", "recency_window_years": 2})
+        errs, _ = self._errors(state, [ev("E1", ["C1"], publication_year=THIS_YEAR - 5)])
+        self.assertTrue(any("C1" in e and "evolving" in e for e in errs))
+        self.assertIn(str(THIS_YEAR - 2), errs[0])   # cutoff 写进报错，方便照着补检索
+
+    def test_timeless_claim_with_old_evidence_is_fine(self):
+        """永真事实/理论界：十几年前的证据依然有效，不该拦。"""
+        state = empty_state(claims=[self._supported("C1", time_sensitivity="timeless")],
+                            time_policy={"as_of": f"{THIS_YEAR}-01-01", "recency_window_years": 2})
+        errs, _ = self._errors(state, [ev("E1", ["C1"], publication_year=THIS_YEAR - 15)])
+        self.assertEqual(errs, [])
+
+    def test_evolving_claim_with_recent_evidence_passes(self):
+        state = empty_state(claims=[self._supported("C1", time_sensitivity="evolving")],
+                            time_policy={"as_of": f"{THIS_YEAR}-01-01", "recency_window_years": 2})
+        errs, _ = self._errors(state, [ev("E1", ["C1"], publication_year=THIS_YEAR - 1)])
+        self.assertEqual(errs, [])
+
+    def test_gate_only_applies_to_positive_verdicts(self):
+        """unknown / contradicted 不需要「近年证据」背书。"""
+        state = empty_state(
+            claims=[claim("C1", status="unknown", evidence_ids=["E1"],
+                          time_sensitivity="evolving"),
+                    claim("C2", status="contradicted", evidence_ids=["E1"],
+                          time_sensitivity="evolving")],
+            time_policy={"as_of": f"{THIS_YEAR}-01-01", "recency_window_years": 2})
+        errs, _ = self._errors(state, [ev("E1", ["C1", "C2"], publication_year=THIS_YEAR - 6)])
+        self.assertEqual(errs, [])
+
+    def test_claim_level_window_overrides_global(self):
+        """单条 Claim 可以放宽/收紧窗口（如硬件迭代慢，用 5 年）。"""
+        state = empty_state(
+            claims=[self._supported("C1", time_sensitivity="evolving", recency_window_years=6)],
+            time_policy={"as_of": f"{THIS_YEAR}-01-01", "recency_window_years": 2})
+        errs, _ = self._errors(state, [ev("E1", ["C1"], publication_year=THIS_YEAR - 4)])
+        self.assertEqual(errs, [])
+
+    def test_missing_time_sensitivity_defaults_to_evolving(self):
+        """缺字段取保守值：宁可多查一轮，也不让过时结论蒙混。"""
+        c = self._supported("C1")
+        c.pop("time_sensitivity")
+        state = empty_state(claims=[c],
+                            time_policy={"as_of": f"{THIS_YEAR}-01-01", "recency_window_years": 2})
+        errs, _ = self._errors(state, [ev("E1", ["C1"], publication_year=THIS_YEAR - 9)])
+        self.assertTrue(errs)
+
+    def test_default_window_and_as_of_when_policy_absent(self):
+        """state 没写 time_policy：按「今天 + 默认窗口」兜底，不报错。"""
+        state = empty_state(claims=[self._supported("C1", time_sensitivity="evolving")])
+        state.pop("time_policy", None)
+        tp = vs.time_policy(state)
+        self.assertEqual(tp["window"], vs.DEFAULT_RECENCY_WINDOW_YEARS)
+        self.assertEqual(tp["as_of"], datetime.now().date().isoformat())
+        self.assertFalse(tp["explicit"])
+
+    # --- 饱和与循环判决 ---------------------------------------------------
+    def test_no_recent_evidence_blocks_saturation(self):
+        """旧证据撑起独立数也不能判饱和：否则拿旧结论提前收口。"""
+        state = empty_state(claims=[claim("C1", time_sensitivity="evolving")],
+                            time_policy={"as_of": f"{THIS_YEAR}-01-01", "recency_window_years": 2})
+        evidence = [ev(f"E{i}", ["C1"], source=s, publication_year=THIS_YEAR - 8)
+                    for i, s in enumerate(["Nature", "IEEE", "ACM"], 1)]
+        rows = vs.saturation_rows(state, evidence)
+        self.assertEqual(rows[0]["independent"], 3)   # 判据本身已满足
+        self.assertTrue(rows[0]["no_recent"])
+        self.assertFalse(rows[0]["saturated"])
+        self.assertIn("ADVISE:query_recent_work", rows[0]["advice"])
+
+    def test_stop_check_continues_on_stale_evolving_claim(self):
+        """还有额度就不许拿旧结论 FINALIZE。"""
+        st = empty_state(claims=[claim("C1", time_sensitivity="evolving")],
+                         search_plans=[{"claim_id": "C1", "queries": [
+                             {"id": "Q1", "channel": "web", "query": "recent work",
+                              "status": "pending"}]}],
+                         time_policy={"as_of": f"{THIS_YEAR}-01-01", "recency_window_years": 2})
+        write_state(self.dir, st, evidence=[
+            ev("E1", ["C1"], source="Nature", publication_year=THIS_YEAR - 8),
+            ev("E2", ["C1"], source="IEEE", publication_year=THIS_YEAR - 7),
+            ev("E3", ["C1"], source="ACM", publication_year=THIS_YEAR - 6)])
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            vs.cmd_stop_check(SimpleNamespace(dir=str(self.dir), json=False))
+        out = buf.getvalue()
+        self.assertIn("CONTINUE", out)
+        self.assertIn("C1", out)
+        st2, _ = vs.load_state(self.dir)
+        self.assertFalse(st2.get("saturation", {}).get("C1", {}).get("stopped"))
+
+    def test_stop_check_finalizes_when_quota_exhausted_even_if_stale(self):
+        """没额度了只能收口：判决仍要报 FINALIZE，不能死循环。"""
+        st = empty_state(claims=[claim("C1", time_sensitivity="evolving")],
+                         search_plans=[],
+                         time_policy={"as_of": f"{THIS_YEAR}-01-01", "recency_window_years": 2})
+        write_state(self.dir, st, evidence=[
+            ev("E1", ["C1"], publication_year=THIS_YEAR - 8)])
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            vs.cmd_stop_check(SimpleNamespace(dir=str(self.dir), json=False))
+        self.assertIn("FINALIZE", buf.getvalue())
+
+    def test_saturation_command_prints_as_of(self):
+        """saturation 输出必须声明基准时点，否则窗口无从核对。"""
+        st = empty_state(claims=[claim("C1", time_sensitivity="evolving")],
+                         time_policy={"as_of": "2026-03-01", "recency_window_years": 3})
+        write_state(self.dir, st, evidence=[])
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            vs.cmd_saturation(SimpleNamespace(dir=str(self.dir)))
+        out = buf.getvalue()
+        self.assertIn("as_of=2026-03-01", out)
+        self.assertIn("recent_window=3y", out)
+        self.assertIn("2023", out)          # cutoff 2026-3=2023
+
+    # --- init -------------------------------------------------------------
+    def test_init_writes_time_policy(self):
+        d = Path(self.tmp.name) / "init"
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            vs.cmd_init(SimpleNamespace(root=str(d), idea="时效性 idea", domain="",
+                                        profile="standard", recency_window=5))
+        state, _ = vs.load_state(Path(buf.getvalue().strip()))
+        self.assertEqual(state["time_policy"]["recency_window_years"], 5)
+        self.assertEqual(state["time_policy"]["as_of"], datetime.now().date().isoformat())
+        self.assertEqual(vs.Validator(SCHEMA_DIR).validate(
+            state, vs.Validator(SCHEMA_DIR).load("research-state.json")), [])
 
 
 if __name__ == "__main__":

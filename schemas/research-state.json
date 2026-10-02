@@ -19,6 +19,15 @@
         "constraints": { "type": "array", "items": { "type": "string" } }
       }
     },
+    "time_policy": {
+      "type": "object",
+      "description": "时效基准：结论「截至何时」成立，以及 evolving Claim 需要多新的证据",
+      "additionalProperties": false,
+      "properties": {
+        "as_of": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+        "recency_window_years": { "type": "integer", "minimum": 1 }
+      }
+    },
     "status": {
       "enum": ["init", "decomposed", "searched", "verified", "analyzed", "reported", "blocked"]
     },

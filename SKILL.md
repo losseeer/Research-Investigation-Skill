@@ -37,7 +37,7 @@ Idea → Claims → Search → Evidence → Claim Verification
 research/<idea-slug>/
 ├── research-state.json     # claims / judgments / prior_art / analysis / budget / unavailable_channels
 ├── evidence.jsonl          # append-only，一行一条 Evidence
-└── report.md               # 14 节报告，见 assets/report-template.md
+└── report.md               # 15 节报告，见 assets/report-template.md
 ```
 
 ## Stage Index
@@ -45,10 +45,10 @@ research/<idea-slug>/
 | Stage | 做什么 | 读 | 退出校验 |
 |---|---|---|---|
 | 0 Init | 初始化 state、派生 `idea-slug`、按 `--profile` 固化预算 | `assets/research-state.template.json`、`assets/budget-profiles.json` | state 可创建，记录了 `profile` 与饱和度阈值 |
-| 1 Decompose | Idea → 原子 Claim | `prompts/decompose.md` | ≥5 条 Claim，覆盖 ≥3 种 type |
-| 2 Search Planning | 每 Claim 生成多通道 query | `prompts/search-planning.md` | 每条 high Claim ≥3 条跨通道 query |
+| 1 Decompose | Idea → 原子 Claim，逐条标 `time_sensitivity` | `prompts/decompose.md` | ≥5 条 Claim，覆盖 ≥3 种 type |
+| 2 Search Planning | 每 Claim 生成多通道 query（增量补 query 用 `add-queries`，`merge` 只接受全量） | `prompts/search-planning.md` | 每条 high Claim ≥3 条跨通道 query |
 | 3 Search | 取回结果 → 归一化 Evidence | `scripts/search_academic.py`、`scripts/search_github.py`、内置 WebSearch / WebFetch；`prompts/evidence-normalization.md` | 无非法 Evidence；URL 已去重 |
-| 4 Verification | Claim → Evidence → Judgment | `prompts/claim-verification.md` | 每条 Claim 有 status；无证据者 `insufficient_evidence` |
+| 4 Verification | Claim → Evidence → Judgment | `prompts/claim-verification.md` | 每条 Claim 有 status；无证据者 `insufficient_evidence`；`evolving` Claim 的正向裁决须有窗口内证据 |
 | 5 Analysis | Prior Art + Bottleneck + Novelty | `prompts/prior-art-analysis.md`、`prompts/feasibility-analysis.md` | 有比较矩阵、bottleneck 分类、Novelty 档位 + because |
 | 6 Report | 仅基于 state 生成报告 | `prompts/report-synthesis.md`、`assets/report-template.md` | 每条结论带 Claim ID / Evidence ID |
 
@@ -122,6 +122,7 @@ python3 scripts/validate_state.py set-evidence <state-dir> E1 --data '{"relevanc
 ```bash
 python3 scripts/validate_state.py profiles
 python3 scripts/validate_state.py init --idea "<idea>" --profile quick
+python3 scripts/validate_state.py init --idea "<idea>" --recency-window 5   # 慢变领域放宽时效窗口
 ```
 
 **额度以 state 为准**：init 后即固化，改配置文件不影响已有调查。脚本不内置任何通道常量。
@@ -141,6 +142,25 @@ python3 scripts/validate_state.py init --idea "<idea>" --profile quick
 （≥8 年前）的证据，`saturation` 会打 `ADVISE:query_recent_work`。**不要逐条结案**——一批低相关老文本身是
 信号：说明该交叉方向历史悠久，而历史悠久的交叉方向通常有近作。此时应先补一次覆盖近年窗口的检索
 （关键词带年份约束 + 以高相关 seed 做引文展开），确认没有近作再停。
+
+## Timeliness
+
+「旧证据支撑现状断言」是最典型的静默失效：LLM 领域两年前的结论今天未必成立，
+但十几年前的生理机制结论今天仍然有效。时效性挂在 **Claim** 上，不挂在 Evidence 上：
+
+| 字段 | 位置 | 含义 |
+|---|---|---|
+| `time_sensitivity` | Claim | `evolving` = 成立依赖时间（能力边界 / 性能 / 现状）；`timeless` = 永真事实（理论性质 / 上下界 / 已确立机制）。**判定不了取 `evolving`** |
+| `recency_window_years` | Claim（覆盖全局） | 该 Claim 的「近年」窗口，默认 2 年 |
+| `time_policy` | state | `{as_of, recency_window_years}`，`as_of` 缺省 = 今天 |
+
+三条落点：
+
+1. **门禁**：`evolving` Claim 拿到 `supported` / `partially_supported`，却没有任何窗口内证据 →
+   `check` 报 error 并给出三个出口（补近年检索 / 改标 `timeless` / 下调裁决并在 rationale 写明适用时点）。
+2. **饱和**：`evolving` Claim 缺窗口内证据时不计饱和（`no_recent`），
+   `stop-check` 在有额度的情况下判 `CONTINUE` 而不是拿旧结论收口。
+3. **报告**：§11 Time Coverage 声明 `as_of` 与窗口，逐条交代 evolving Claim 的窗口内证据。
 
 **收口**：所有 `importance == high` 的 Claim 均已裁决 → 进入 Stage 5。
 
@@ -167,12 +187,14 @@ python3 scripts/validate_state.py stop-check <dir>     # 自动饱和判定 + CO
 
 1. 每个结论必须可回溯 `Claim → Evidence → Source`。
 2. 证据不足一律 `insufficient_evidence`，**禁止推导「没搜到 ⇒ 不存在」**。
-3. 通道失败写入 `unavailable_channels[]`，并在报告 §11 Risks 声明覆盖缺口。
+3. 通道失败写入 `unavailable_channels[]`，并在报告 §12 Risks 声明覆盖缺口。
 4. `implementation_level` 逐级举证：`idea → paper → code → prototype → production → commercial_product`。论文存在 ≠ 有代码，有代码 ≠ 有产品，有产品 ≠ 已验证市场价值。
 5. Report 只由 `research-state.json` + `evidence.jsonl` 生成，不引入上下文中的临时信息。
 6. Evidence 全文不进上下文，只写 `evidence.jsonl`；单轮迭代最多 10 条摘要进入上下文。
 7. **检索执行状态必须回写**：每条 query 执行后用 `mark-query` 更新 `status`（done / failed / skipped）与 `result_count`，
    否则复查时无法证明它到底跑没跑；每条 Evidence 记录 `query_id` 以回溯它从哪条 query 进入候选池。
+8. **现状断言必须有近年证据**：`evolving` Claim 的 `supported` / `partially_supported` 只能由窗口内证据支撑；
+   标 `timeless` 必须写出理由（写在 Claim `notes`），「懒得补检索」不算。
 
 ## Resources
 
@@ -194,12 +216,12 @@ python3 scripts/validate_state.py stop-check <dir>     # 自动饱和判定 + CO
 ### assets/
 - `research-state.template.json` — state 初始模板（额度由 profile 覆盖）
 - `budget-profiles.json` — quick / standard / deep 三档预算与饱和判据
-- `report-template.md` — 14 节报告骨架
+- `report-template.md` — 15 节报告骨架（§11 是 Time Coverage）
 
 ### scripts/
 - `search_academic.py` — OpenAlex + Crossref（+arXiv）
 - `search_github.py` — GitHub Search API
-- `validate_state.py` — state 唯一读写入口：init（**--profile**）/ check（stage 门禁）/ budget / saturation / consume / set-evidence / **mark-query（query 计费唯一入口）** / merge（Stage 4–6 写回）/ finalize / profiles / next-query / stop-check / topk
+- `validate_state.py` — state 唯一读写入口：init（**--profile** / **--recency-window**）/ check（stage 门禁 + 时效门禁）/ budget / saturation（输出 `as_of` 与 cutoff）/ consume / set-evidence / **mark-query（query 计费唯一入口）** / merge（Stage 4–6 写回，**search_plans 只接受全量**）/ finalize（把裁决回写 claim.status）/ profiles / next-query / stop-check / topk / **add-queries** / **add-evidence**
 - `_common.py` — 网络层（代理回退 + 429 退避），被上面三个脚本共用
 
 ### schemas/

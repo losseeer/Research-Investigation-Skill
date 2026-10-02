@@ -153,7 +153,8 @@ class TestFullPipeline(unittest.TestCase):
         return c
 
     def test_fixtures_loaded(self):
-        self.assertEqual(len(FIXTURES), 7, "应有 7 个 fixture：01–04 正例路径 + 05 负例 + 06 MODIFY + 07 PIVOT")
+        self.assertEqual(len(FIXTURES), 8,
+                         "应有 8 个 fixture：01–04 正例路径 + 05 坏分解 + 06 MODIFY + 07 PIVOT + 08 过时证据")
 
     def test_positive_fixtures_run_to_report(self):
         for path in FIXTURES:
@@ -193,18 +194,35 @@ class TestFullPipeline(unittest.TestCase):
         self.assertEqual(judged["C5"], "supported")      # 相邻机会
         self.assertTrue(state["recommendation"]["conditions"])
 
-    def test_negative_fixture_rejected_by_gate(self):
-        path = next(p for p in FIXTURES
-                    if not json.loads(p.read_text(encoding="utf-8")).get("expect_pass"))
-        fx = json.loads(path.read_text(encoding="utf-8"))
-        case = self._case(path)
-        case.init()
-        case.merge({"claims": fx["claims"]})
-        case.merge({"search_plans": build_search_plans(fx["queries"])})
-        rc, out = case.check(fx["expect_fail_stage"])
-        self.assertEqual(rc, 1, f"负例 fixture 应被门禁拦下，实际通过：\n{out}")
-        for needle in fx["expect_error_contains"]:
-            self.assertIn(needle, out, f"报错信息里应包含「{needle}」")
+    def test_negative_fixtures_rejected_by_gate(self):
+        negatives = [p for p in FIXTURES
+                     if not json.loads(p.read_text(encoding="utf-8")).get("expect_pass")]
+        self.assertGreaterEqual(len(negatives), 2, "应有多个负例：坏分解 + 过时证据")
+        for path in negatives:
+            fx = json.loads(path.read_text(encoding="utf-8"))
+            with self.subTest(fixture=fx["id"]):
+                case = self._case(path)
+                case.init()
+                case.merge({"claims": fx["claims"]})
+                case.merge({"search_plans": build_search_plans(fx["queries"])})
+                if fx.get("evidence"):
+                    sys.path.insert(0, str(ROOT / "scripts"))
+                    import validate_state as vs
+                    by_channel = {}
+                    for e in fx["evidence"]:
+                        by_channel.setdefault(e["channel"], []).append(e)
+                    plan_ids = plan_query_ids(fx["queries"])
+                    for channel, items in by_channel.items():
+                        qid = (plan_ids.get(channel) or [None])[0]
+                        vs.append_evidence(case.dir, items, channel, query_id=qid)
+                        if qid:
+                            vs.finish_query(case.dir, qid, "done", len(items))
+                if fx.get("judgments"):
+                    case.merge({"judgments": fx["judgments"]})
+                rc, out = case.check(fx["expect_fail_stage"])
+                self.assertEqual(rc, 1, f"{fx['id']}: 负例应被门禁拦下，实际通过：\n{out}")
+                for needle in fx["expect_error_contains"]:
+                    self.assertIn(needle, out, f"{fx['id']}: 报错信息里应包含「{needle}」")
 
     def test_dont_do_fixture_has_identical_prior_art(self):
         path = next(p for p in FIXTURES

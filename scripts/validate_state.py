@@ -270,6 +270,108 @@ def charge_query(state: dict, qid: str) -> bool:
     return True
 
 
+def require_query(state_dir, qid: str, channel: str = None) -> dict:
+    """检索脚本落盘前的闸门：Q 必须存在、通道必须吻合，否则 raise ValueError。
+
+    之前的事故：脚本先写 evidence 再校验 query_id，找不到时已经留下孤儿条目
+    （query_id 指向不存在的 Q，cross_check 报一片 error）。闸门必须在**任何落盘之前**。
+    """
+    state, _ = load_state(Path(state_dir))
+    return require_query_in_state(state, qid, channel)
+
+
+def require_query_in_state(state: dict, qid: str, channel: str = None) -> dict:
+    """同 require_query，但作用在已加载的 state 上（省一次磁盘读）。"""
+    plan_map = {q.get("id"): q for p in state.get("search_plans", [])
+                for q in p.get("queries", [])}
+    q = plan_map.get(qid)
+    if q is None:
+        raise ValueError(f"{qid}: search_plans 中不存在（拒绝落盘证据，避免孤儿条目）")
+    if channel and q.get("channel") and q["channel"] != channel:
+        raise ValueError(
+            f"{qid}: 规划通道是 {q['channel']}，本次要按 {channel} 计费（拒绝落盘）")
+    return q
+
+
+def add_queries(state_dir, patch) -> list:
+    """向某 Claim 的 plan **追加** query，不触碰已有条目。
+
+    与 merge 的差别：merge 对 search_plans 是「按 claim_id 覆盖整个 queries 数组」，
+    增量补 query 时用它会把旧 query 静默删掉。这里按 Q id 合并，缺 id 则自动分配 Qn。
+    返回新增的 Q id 列表。
+    """
+    state_dir = Path(state_dir)
+    state, path = load_state(state_dir)
+    plans = patch if isinstance(patch, list) else [patch]
+
+    nums = [int(m.group(1)) for p in state.get("search_plans", [])
+            for q in p.get("queries", [])
+            if (m := re.match(r"^Q(\d+)$", str(q.get("id", ""))))]
+    next_n = (max(nums) + 1) if nums else 1
+
+    added = []
+    for item in plans:
+        claim_id = item.get("claim_id")
+        if not claim_id:
+            raise ValueError("patch 每项都需要 claim_id")
+        plan = next((p for p in state.get("search_plans", [])
+                     if p.get("claim_id") == claim_id), None)
+        if plan is None:
+            plan = {"claim_id": claim_id, "queries": []}
+            state.setdefault("search_plans", []).append(plan)
+        index = {q.get("id"): q for q in plan.get("queries", []) if q.get("id")}
+        for q in item.get("queries", []):
+            q = dict(q)
+            if q.get("id") and q["id"] in index:      # 已存在：合并字段，不新增
+                index[q["id"]].update(q)
+                continue
+            if not q.get("id"):                        # 没给 id：自动分配，避免跨调用撞号
+                q["id"] = f"Q{next_n}"
+                next_n += 1
+            if q.get("channel") not in CHANNELS:
+                raise ValueError(f"{q['id']}: channel 必须属于 {', '.join(CHANNELS)}")
+            q.setdefault("status", "pending")
+            plan.setdefault("queries", []).append(q)
+            added.append(q["id"])
+
+    errs = Validator(SCHEMA_DIR).validate(state, Validator(SCHEMA_DIR).load("research-state.json"))
+    if errs:
+        raise ValueError("；".join(errs))
+    save_state(path, state)
+    return added
+
+
+def detect_plan_shrink(state: dict, patch: dict) -> list:
+    """merge 若会丢掉已有 query，返回人类可读的原因列表（空列表 = 安全）。
+
+    merge 对 search_plans 是整体替换 queries 数组，增量补 query 极易误删旧条目，
+    这种丢失必须是**可见的**，不能等 check 报一片悬空引用才发现。
+    """
+    errs = []
+    incoming = patch.get("search_plans")
+    if not isinstance(incoming, list):
+        return errs
+    existing = {p.get("claim_id"): p for p in state.get("search_plans", [])
+                if isinstance(p, dict)}
+    for item in incoming:
+        if not isinstance(item, dict):
+            continue
+        cid = item.get("claim_id")
+        new_qs = item.get("queries")
+        if cid not in existing or not isinstance(new_qs, list):
+            continue
+        old_ids = [q.get("id") for q in existing[cid].get("queries", []) if q.get("id")]
+        new_ids = {q.get("id") for q in new_qs if q.get("id")}
+        lost = [q for q in old_ids if q not in new_ids]
+        if lost:
+            shown = ", ".join(lost[:6]) + ("…" if len(lost) > 6 else "")
+            errs.append(
+                f"search_plans[{cid}]: patch 缺少 {len(lost)} 条已存在的 query（{shown}）——"
+                f"merge 会整体替换 queries 数组，等于删掉它们。"
+                f"追加请用 `add-queries`；确需精简请直接改 research-state.json")
+    return errs
+
+
 def finish_query(state_dir, qid: str, status: str, result_count: int = None, charge: bool = True):
     """结束一条 query：回写 status / result_count，并按通道计费一次。
 
@@ -354,9 +456,16 @@ def append_evidence(state_dir, items: list, channel: str, query_id: str = None):
 
     去重键 = 归一化 URL ∪ 归一化标题（命中任一即丢弃）。
     **query 计数不由本函数负责**——调用方必须用 finish_query / mark-query 计费。
+    给了 query_id 但该 Q 不存在时**拒绝落盘**（防止 query_id 悬空的孤儿条目）。
     返回 (added, skipped)。
     """
+    state_dir = Path(state_dir)
     if query_id:
+        st, _ = load_state(state_dir)
+        try:
+            require_query_in_state(st, query_id)
+        except ValueError as e:
+            raise ValueError(str(e).replace("（拒绝落盘证据，避免孤儿条目）", "（拒绝落盘）"))
         for it in items:
             it.setdefault("query_id", query_id)
     state_dir = Path(state_dir)
@@ -450,6 +559,26 @@ def cross_check(state: dict, evidence: list, errors: list, warnings: list):
                 errors.append(f"{c.get('id')}: evidence_ids 引用了不存在的 {eid}")
         if c.get("confidence", 0) > 0 and not c.get("evidence_ids"):
             errors.append(f"{c.get('id')}: confidence > 0 但无关联 Evidence")
+
+    # 时效门禁：evolving Claim 给出正向裁决时，必须有窗口内的证据。
+    # 只用「旧证据」得出「现在仍成立」是时效性最典型的静默失效，必须显式拦住。
+    tp = time_policy(state)
+    for c in state.get("claims", []):
+        cid = c.get("id")
+        evs = [e for e in evidence if cid in e.get("claim_ids", [])]
+        # 只对正向裁决施加：unknown / contradicted 不需要「近年证据」背书
+        if not is_evolving(c) or not evs or verdict_status(state, c) not in POSITIVE_VERDICTS:
+            continue
+        cutoff = recent_cutoff(state, c)
+        if recent_count(state, c, evs) > 0:
+            continue
+        years = sorted(evidence_year(e) for e in evs if evidence_year(e))
+        span = f"{years[0]}–{years[-1]}" if len(years) > 1 else (str(years[0]) if years else "未知")
+        errors.append(
+            f"{cid}: evolving Claim 但无 {tp['window']} 年内（>= {cutoff}）的证据，"
+            f"现有证据年份 {span} —— 不能据此断言「现在仍成立」。"
+            f"补近年检索；或确认其为永真事实后标 time_sensitivity=timeless；"
+            f"或改判 partially_supported / insufficient_evidence 并在 rationale 写明结论的适用时点")
 
     for j in state.get("judgments", []):
         if j.get("claim_id") not in claim_ids:
@@ -575,6 +704,11 @@ def saturation_rows(state: dict, evidence: list, th=None):
             for e in evs
         })
         dup_rate = 0.0 if n == 0 else round(1 - len(set(urls)) / n, 3)
+        # 时效：判据不是「证据有多老」，而是「这条断言的成立是否已被近期证据确认」；
+        # timeless Claim（永真事实）不存在这个问题。
+        recent = recent_count(state, c, evs)
+        evolving = is_evolving(c)
+        no_recent = evolving and recent == 0
         rounds = state.get("saturation", {}).get(cid, {}).get("rounds_without_change", 0)
         stopped = state.get("saturation", {}).get(cid, {}).get("stopped", False)
         # 低相关老文告警：某个方向出现一批 relevance 低、年份老的工作本身是信号——
@@ -598,6 +732,11 @@ def saturation_rows(state: dict, evidence: list, th=None):
             flags.append("marked_stopped")
         if old_low_cnt >= 2 and not stopped:
             flags.append("ADVISE:query_recent_work")
+        advice = []
+        if no_recent:
+            advice.append("ADVISE:query_recent_work")
+        # evolving Claim 缺近年证据时**不计入饱和**：否则会拿旧结论提前收口
+        saturated = bool(flags) and not no_recent
         rows.append({
             "claim_id": cid,
             "evidence": n,
@@ -606,8 +745,13 @@ def saturation_rows(state: dict, evidence: list, th=None):
             "duplicate_rate": dup_rate,
             "rounds_without_change": rounds,
             "old_low_rel": old_low_cnt,
-            "saturated": bool(flags),
+            "recent": recent,
+            "cutoff": recent_cutoff(state, c),
+            "time_sensitivity": "evolving" if evolving else "timeless",
+            "no_recent": no_recent,
+            "saturated": saturated,
             "flags": flags,
+            "advice": advice,
         })
     return rows
 
@@ -625,6 +769,10 @@ def cmd_init(args):
         state = json.load(f)
     name = args.profile or load_profiles().get("default", "standard")
     apply_profile(state, name)
+    state["time_policy"] = {
+        "as_of": datetime.now().date().isoformat(),
+        "recency_window_years": getattr(args, "recency_window", DEFAULT_RECENCY_WINDOW_YEARS),
+    }
     state["idea"] = {"title": title, "raw": args.idea, "slug": slug, "domain": args.domain or "",
                      "constraints": []}
     state["created_at"] = now_iso()
@@ -707,11 +855,18 @@ def cmd_saturation(args):
               f"按默认判据判定: independent>={th['min_independent']} "
               f"no_change>={th['max_rounds_without_change']} dup>{th['duplicate_rate']}")
     rows = saturation_rows(state, evidence, th)
-    print(f"{'claim':<8}{'ev':>4}{'indep':>7}{'chg':>5}{'dup':>7}{'oldLR':>7}{'rounds':>8}  flags")
+    tp = time_policy(state)
+    print(f"as_of={tp['as_of']}  recent_window={tp['window']}y"
+          + ("" if tp["explicit"] else "  (state 未记录 time_policy，用默认值)"))
+    print(f"{'claim':<8}{'ev':>4}{'indep':>7}{'chg':>5}{'dup':>7}{'oldLR':>7}"
+          f"{'recent':>7}{'rounds':>8}  flags")
     for r in rows:
+        recent = f"{r['recent']}/{r['cutoff']}" if r["time_sensitivity"] == "evolving" else "n/a"
         print(f"{r['claim_id']:<8}{r['evidence']:>4}{r['independent']:>7}{r['changes_judgment']:>5}"
-              f"{r['duplicate_rate']:>7}{r['old_low_rel']:>7}{r['rounds_without_change']:>8}  "
-              f"{'SATURATED ' if r['saturated'] else '-'}{','.join(r['flags'])}")
+              f"{r['duplicate_rate']:>7}{r['old_low_rel']:>7}{recent:>7}"
+              f"{r['rounds_without_change']:>8}  "
+              f"{'SATURATED ' if r['saturated'] else '-'}"
+              f"{','.join(r['flags'] + r['advice']) or '(未饱和)'}")
     return 0
 
 
@@ -800,6 +955,11 @@ def cmd_merge(args):
     if not isinstance(patch, dict):
         sys.exit("FATAL: --data 必须是 JSON 对象")
 
+    loss = detect_plan_shrink(state, patch)
+    if loss:
+        for e in loss:
+            print(f"ERROR: {e}")
+        return 1
     errs = Validator(SCHEMA_DIR).validate(merge_state(state, patch),
                                           Validator(SCHEMA_DIR).load("research-state.json"))
     if errs:
@@ -809,6 +969,96 @@ def cmd_merge(args):
     sync_budget(state)  # merge 可能带入 search_plans，重算派生计数防漂移
     save_state(path, state)
     print(f"merged: {sorted(patch)}")
+    return 0
+
+
+def cmd_add_queries(args):
+    """往 plan 里**追加** query（按 Q id 合并），不触碰已有条目。"""
+    try:
+        patch = json.loads(args.data)
+    except json.JSONDecodeError as e:
+        sys.exit(f"FATAL: --data 不是合法 JSON: {e.msg}")
+    try:
+        added = add_queries(args.dir, patch)
+    except ValueError as e:
+        sys.exit(f"FATAL: {e}")
+    if not added:
+        print("no new query（全部命中已有 Q id，仅合并字段）")
+    else:
+        print("added: " + ", ".join(added))
+    return 0
+
+
+def _read_items(args) -> list:
+    if getattr(args, "file", None):
+        raw = Path(args.file).read_text(encoding="utf-8")
+    elif getattr(args, "data", None):
+        raw = args.data
+    else:
+        raw = sys.stdin.read()
+    items = json.loads(raw)
+    if isinstance(items, dict):
+        items = items.get("evidence", [items])
+    if not isinstance(items, list):
+        sys.exit("FATAL: 输入必须是 Evidence 数组，或含 evidence 字段的对象")
+    return items
+
+
+def cmd_add_evidence(args):
+    """web / product 等由 agent 侧执行的通道：把结果落成合规 Evidence。
+
+    之前这类通道没有脚本入口，只能手拼 evidence.jsonl 再靠 check 兜校验，
+    E 编号、去重、记账全靠人工。这里统一：预校验 → 分配 E 编号 → 去重 → 记 results → 落盘。
+    **任何一条不合法就一条都不写**。
+    """
+    state_dir = Path(args.dir)
+    state, _ = load_state(state_dir)
+    v = Validator(SCHEMA_DIR)
+    schema = v.load("evidence.json")
+    existing, _ = load_evidence(state_dir)
+    nums = [int(m.group(1)) for e in existing
+            if (m := re.match(r"^E(\d+)$", str(e.get("id", ""))))]
+    next_n = (max(nums) + 1) if nums else 1
+    claim_ids = {c.get("id") for c in state.get("claims", [])}
+
+    items = _read_items(args)
+    errors, staged = [], []
+    for i, raw in enumerate(items, 1):
+        if not isinstance(raw, dict):
+            errors.append(f"[{i}]: 不是 JSON 对象")
+            continue
+        it = dict(raw)
+        it["id"] = f"E{next_n + len(staged)}"   # 占位编号，报错时能指名到具体条目
+        it["channel"] = args.channel
+        if args.query_id:
+            it["query_id"] = args.query_id
+        it.setdefault("relevance", 0.5)
+        schema_errs = v.validate(it, schema)
+        if schema_errs:
+            errors.append(f"[{i}] ({it['id']}): " + "；".join(schema_errs))
+            continue
+        for cid in it.get("claim_ids", []):
+            if cid not in claim_ids:
+                errors.append(f"[{i}] ({it['id']}): claim_ids 引用不存在的 {cid}")
+        staged.append(it)
+
+    if args.query_id:
+        try:
+            require_query_in_state(state, args.query_id, args.channel)
+        except ValueError as e:
+            errors.append(str(e))
+
+    if errors:
+        for e in errors:
+            print(f"ERROR: {e}")
+        print(f"未写入任何证据（{len(items)} 条候选全部驳回）")
+        return 1
+
+    added, skipped = append_evidence(state_dir, staged, args.channel, query_id=args.query_id)
+    print(f"added {len(added)} / skipped {len(skipped)} (dup)"
+          + (f" -> {[a['id'] for a in added]}" if added else ""))
+    if skipped:
+        print("dup:", *skipped[:5], sep="\n  ", file=sys.stderr)
     return 0
 
 
@@ -864,6 +1114,10 @@ def cmd_finalize(args):
     filled = 0
     for c in state.get("claims", []):
         if c.get("id") in judged:
+            # 裁决已存在：把状态回写 claim，避免 claim.status 与 judgment 长期不一致
+            j = next(x for x in state["judgments"] if x.get("claim_id") == c["id"])
+            if j.get("status") != c.get("status"):
+                c["status"] = j["status"]
             continue
         state.setdefault("judgments", []).append({
             "claim_id": c["id"],
@@ -890,6 +1144,67 @@ def cmd_finalize(args):
 
 
 MAX_CONTEXT_EVIDENCE = 10  # SKILL.md Hard Rules：单轮迭代最多 10 条证据摘要进上下文
+DEFAULT_RECENCY_WINDOW_YEARS = 2  # evolving Claim 需要「近年证据」的默认窗口
+DEFAULT_TIME_SENSITIVITY = "evolving"  # 缺字段时取保守值：宁可多查一轮，也不让过时结论蒙混
+POSITIVE_VERDICTS = ("supported", "partially_supported")  # 只有正向裁决才需要「近年证据」背书
+
+
+def time_policy(state: dict) -> dict:
+    """时效基准。缺 time_policy 时按「今天 + 默认窗口」处理，并标记来源。"""
+    tp = state.get("time_policy") or {}
+    today = datetime.now().date()
+    raw_as_of = tp.get("as_of") or ""
+    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", str(raw_as_of))
+    if m:
+        as_of = str(raw_as_of)
+        year = int(m.group(1))
+    else:
+        as_of = today.isoformat()
+        year = today.year
+    window = tp.get("recency_window_years") or DEFAULT_RECENCY_WINDOW_YEARS
+    return {"as_of": as_of, "window": int(window), "cutoff": year - int(window),
+            "explicit": bool(tp)}
+
+
+def claim_window(state: dict, claim: dict) -> int:
+    """该 Claim 适用的窗口：自身覆盖 > 全局。"""
+    return int(claim.get("recency_window_years") or time_policy(state)["window"])
+
+
+def is_evolving(claim: dict) -> bool:
+    return (claim.get("time_sensitivity") or DEFAULT_TIME_SENSITIVITY) == "evolving"
+
+
+def verdict_status(state: dict, claim: dict):
+    """裁决以 judgments 为准，未裁决时退回 claim.status。
+
+    finalize 会把 judgment 回写 claim.status，但「改了裁决没回写」是常见的人为/脚本漏步，
+    门禁读 claim.status 会漏判，故一律以 judgment 为权威。
+    """
+    cid = claim.get("id")
+    for j in state.get("judgments", []):
+        if j.get("claim_id") == cid:
+            return j.get("status")
+    return claim.get("status")
+
+
+def evidence_year(e: dict):
+    y = e.get("publication_year")
+    return int(y) if isinstance(y, int) else None
+
+
+def recent_cutoff(state: dict, claim: dict) -> int:
+    """该 Claim 的『近年』分界年：as_of 年 - 适用窗口。"""
+    tp = time_policy(state)
+    m = re.match(r"^(\d{4})", tp["as_of"])
+    base_year = int(m.group(1)) if m else datetime.now().year
+    return base_year - claim_window(state, claim)
+
+
+def recent_count(state, claim, evs) -> int:
+    """窗口内（>= 分界年）的证据条数。"""
+    cutoff = recent_cutoff(state, claim)
+    return sum(1 for e in evs if (y := evidence_year(e)) is not None and y >= cutoff)  # SKILL.md Hard Rules：单轮迭代最多 10 条证据摘要进上下文
 
 
 def cmd_stop_check(args):
@@ -924,6 +1239,8 @@ def cmd_stop_check(args):
     judged = {j.get("claim_id") for j in state.get("judgments", [])}
     need = [c["id"] for c in high if c["id"] not in judged]
     pend = executable_queries(state)
+    tp = time_policy(state)
+    stale = [r["claim_id"] for r in rows if r["no_recent"] and r["evidence"] > 0]
     iters = state.get("search_budget", {}).get("iterations", 0)
     max_iters = state.get("search_budget", {}).get("max_iterations", 0)
 
@@ -933,6 +1250,12 @@ def cmd_stop_check(args):
         verdict, reason = "FINALIZE", "所有 high Claim 已达证据饱和"
     elif not pend:
         verdict, reason = "FINALIZE", "无可执行的 query（额度耗尽或无 pending）"
+    elif stale:
+        # 时效缺口：还有额度就不许拿旧结论收口，先补近年检索
+        verdict = "CONTINUE"
+        reason = (f"{', '.join(stale)} 是 evolving Claim 但没有 {tp['window']} 年内的证据"
+                  f"（cutoff {tp['cutoff']}）——先补近年检索；"
+                  f"或确认是永真事实后标 time_sensitivity=timeless")
     elif max_iters and iters >= max_iters:
         verdict, reason = "FINALIZE", f"iterations {iters} 已达上限 {max_iters}"
     else:
@@ -1016,6 +1339,8 @@ def main():
     pi.add_argument("--profile", default=None,
                     help=f"预算档位，可选 {', '.join(PROFILE_NAMES)}；"
                          f"不指定则用 budget-profiles.json 的 default")
+    pi.add_argument("--recency-window", type=int, default=DEFAULT_RECENCY_WINDOW_YEARS,
+                    help="evolving Claim 需要多新的证据（年）；结论的适用窗口")
     pi.set_defaults(func=cmd_init)
 
     pp = sub.add_parser("profiles", help="列出可用预算档位及其额度")
@@ -1076,6 +1401,21 @@ def main():
     pm.add_argument("dir")
     pm.add_argument("--data", required=True, help="JSON 对象，如 '{\"judgments\":[{...}]}'")
     pm.set_defaults(func=cmd_merge)
+
+    paq = sub.add_parser("add-queries", help="向 plan 追加 query（按 Q id 合并，不删已有条目）")
+    paq.add_argument("dir")
+    paq.add_argument("--data", required=True,
+                     help="JSON，如 '{\"claim_id\":\"C3\",\"queries\":[{\"channel\":\"web\","
+                          "\"query\":\"...\"}]}'；也接受该对象的数组")
+    paq.set_defaults(func=cmd_add_queries)
+
+    pae = sub.add_parser("add-evidence", help="把 web/product 等通道的结果落成合规 Evidence")
+    pae.add_argument("dir")
+    pae.add_argument("--channel", required=True, choices=CHANNELS)
+    pae.add_argument("--query-id", default=None, help="产出这些证据的 Q id（须已存在）")
+    pae.add_argument("--data", default=None, help="Evidence 数组 JSON")
+    pae.add_argument("--file", default=None, help="装 Evidence 数组的 JSON 文件")
+    pae.set_defaults(func=cmd_add_evidence)
 
     pmq = sub.add_parser("mark-query", help="执行后回写某 query 的 status / result_count")
     pmq.add_argument("dir")

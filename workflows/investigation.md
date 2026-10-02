@@ -11,6 +11,19 @@ Stage 0 的 `init` 由 `--profile`（默认 `standard`）把三档之一固化�
 用户说「快速看下」「只要结论」「深挖一下」「写论文用」分别对应 `quick` / `standard` / `deep`；
 未明示时用 `standard`。换档要重新 init——进行中的调查不会因为改了配置文件而变额度。
 
+## Timeliness
+
+时效基准来自 `state.time_policy`：`as_of`（init 写入当天，缺省按今天）+ `recency_window_years`（默认 2 年）。
+慢变领域可在 init 时放宽：
+
+```bash
+python3 scripts/validate_state.py init --idea "<idea>" --recency-window 5
+```
+
+`evolving` Claim 才是被约束的对象；`timeless` Claim 用多旧的证据都不拦。
+逐条判定在 Stage 1 完成（见 `prompts/decompose.md`），判定不了取 `evolving`——
+错标 evolving 只多查一轮，错标 timeless 会让过时结论直接进最终建议。
+
 ## Action Space
 
 每一轮从下面选一个动作执行。动作本身由 Agent 判断，但**每个动作前后都要过一次 `validate_state.py`**。
@@ -52,12 +65,38 @@ python3 scripts/validate_state.py check <dir>
 - query 计数只有 `mark-query` 一个入口（`executed_queries` 收据派生 `by_channel[*].queries`）；
   同一 Q 重复 mark 标注 `[already-charged]` 而不重复扣，`check` 会把手写计数判为 error。
 - `consume` 只负责 results 与 iterations；传 `--queries` 会直接报错。
-- 检索脚本必须带 `--query-id`；只给 `--state-dir` 不给 `--query-id` 会被拒绝。
+- 检索脚本必须带 `--query-id`，且**在取数前**就校验该 Q 存在、通道吻合；不存在的 Q 直接 FATAL，
+  一条证据都不落盘（旧行为是先写证据再报错，留下 query_id 悬空的孤儿条目，只能手删）。
 
-两个坑：① `check` 用 `not q.get("result_count")` 判定，所以 **0 条结果不能写 `done --result-count 0`**
+四个坑：① `check` 用 `not q.get("result_count")` 判定，所以 **0 条结果不能写 `done --result-count 0`**
 （会被判 "status=done 但缺 result_count"）。查到 0 条时标 `skipped`，并把「该 query 过窄返回 0 条」
-写进报告 §11 的覆盖缺口。② `merge` 对 `search_plans` 是按 id upsert，**删不掉条目**——
-要把计划压回通道额度以内，只能直接改 `research-state.json`（脚本过滤后 `save_state`）。
+写进报告 §12 的覆盖缺口。② **`merge` 对 `search_plans` 是按 claim_id 覆盖整个 `queries` 数组**，
+补新 query 时只传新增项会把旧 query 静默删掉。增量追加用 `add-queries`：
+
+```bash
+# ✅ 追加：按 Q id 合并，不动已有条目；不给 id 会自动分配 Qn
+python3 scripts/validate_state.py add-queries <dir> \
+  --data '{"claim_id":"C3","queries":[{"channel":"web","query":"..."}]}'
+
+# ❌ merge：patch 里缺了已存在的 Q 会被判定为误删并拒绝写入（rc=1）
+python3 scripts/validate_state.py merge <dir> --data '{"search_plans":[...]}'
+```
+
+确需精简计划（把条数压回通道额度内）只能直接改 `research-state.json`——`merge` 和 `add-queries` 都不会替你删。
+③ `web` / `product` 由 agent 侧执行，落证据走 `add-evidence`，不要手拼 `evidence.jsonl`：
+
+```bash
+python3 scripts/validate_state.py add-evidence <dir> --channel web --query-id Q12 \
+  --data '[{...}]'          # 或 --file items.json / 省略则读 stdin
+```
+
+它统一做 schema 校验 + E 编号 + 跨源去重 + 记 results 额度；**任何一条不合法就一条都不写**。
+④ **时效缺口**：`evolving` Claim 用窗口外的旧证据下 `supported` / `partially_supported`，
+`check` 会直接报 error（`idea-08` 这个 fixture 就是因此被卡在 stage 4）。三个出口，按优先级：
+
+1. 补近年检索（关键词加年份下界 + 高相关 seed 引文展开）——默认走这条；
+2. 确认是永真事实 → 改标 `time_sensitivity=timeless` 并在 `notes` 写理由；
+3. 都不成立 → 下调为 `insufficient_evidence`，在 rationale 写明「结论只对到 X 年成立」。
 
 **引文展开（`cite` action）**：任何一条归一化后 `relevance >= 0.8` 的学术证据，都要对它能做的引文展开。
 这是关键词之外的必做入口，不受词表限制。直接以 seed 的 OpenAlex work id 构造 query：
@@ -92,12 +131,16 @@ python3 scripts/search_academic.py --query "cites:W123456789" --query-id Q6 \
 
 ```bash
 python3 scripts/validate_state.py saturation <dir>
-# claim     ev  indep  chg    dup  oldLR  rounds  flags
-# C3         9      8    1    0.0      2       0  old_low_rel>=2,ADVISE:query_recent_work
+# as_of=2026-09-09  recent_window=2y
+# claim     ev  indep  chg    dup  oldLR  recent  rounds  flags
+# C3         9      8    1    0.0      2     0/2024      0  old_low_rel>=2,ADVISE:query_recent_work
 ```
 
-`oldLR` = 该方向 `relevance<0.6` 且 `publication_year` 较早（≥8 年前）的证据数；
-出现 `ADVISE:query_recent_work` 表示应先补近年检索，见上文「低相关老文告警」。
+- `oldLR` = 该方向 `relevance<0.6` 且 `publication_year` 较早（≥8 年前）的证据数；
+  出现 `ADVISE:query_recent_work` 表示应先补近年检索，见上文「低相关老文告警」。
+- `recent` = 窗口内证据数 / 该 Claim 的 cutoff 年；`timeless` Claim 显示 `n/a`。
+  `evolving` Claim 的 `recent` 为 0 时不计饱和（flags 里带 `ADVISE:query_recent_work`），
+  `stop-check` 会判 `CONTINUE` 而不是拿旧结论收口——除非额度已耗尽。
 
 ### 收口
 
@@ -112,10 +155,11 @@ python3 scripts/validate_state.py finalize <dir> --reason "预算耗尽："
 ```
 
 它把所有还没裁决的 Claim 一律补成 `insufficient_evidence`（`confidence` 强制 0.0），
-并把 state 推到 `verified`。幂等：已裁决的 Claim 不会被覆盖。
+并把 state 推到 `verified`。幂等：已裁决的 Claim 不会被覆盖，但会把 Judgment 状态回写
+`claim.status`（避免两处状态长期不一致）。
 
 这是红线之一：**没查到 ≠ 不存在**。收口时补的 rationale 会写明是「未执行/未完成检索」，
-报告 §11 还要把 `unavailable_channels` 和未覆盖方向一起列出来。
+报告 §12 还要把 `unavailable_channels`、未覆盖方向和时效缺口一起列出来。
 
 ## 上下文控制
 

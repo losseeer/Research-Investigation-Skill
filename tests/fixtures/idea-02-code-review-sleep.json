@@ -6,11 +6,11 @@
   "expect_pass": true,
   "expect_verdict": "INSUFFICIENT_EVIDENCE",
   "claims": [
-    {"id": "C1", "statement": "睡眠剥夺会显著降低需要持续注意力的认知任务表现", "type": "scientific", "importance": "high", "status": "unknown", "confidence": 0.0},
-    {"id": "C2", "statement": "已有实证研究直接测量过睡眠与代码审查质量的关系", "type": "scientific", "importance": "high", "status": "unknown", "confidence": 0.0},
-    {"id": "C3", "statement": "企业在排班时能拿到并使用开发者的睡眠数据", "type": "technical", "importance": "high", "status": "unknown", "confidence": 0.0},
-    {"id": "C4", "statement": "团队愿意为审查排班工具改变现有流程", "type": "market", "importance": "medium", "status": "unknown", "confidence": 0.0},
-    {"id": "C5", "statement": "已有面向工程效能的排班或负荷管理产品", "type": "product", "importance": "medium", "status": "unknown", "confidence": 0.0}
+    {"id": "C1", "statement": "睡眠剥夺会显著降低需要持续注意力的认知任务表现", "type": "scientific", "importance": "high", "status": "unknown", "confidence": 0.0, "time_sensitivity": "timeless", "notes": "生理机制类结论，2007/2019 两份荟萃分析至今仍成立"},
+    {"id": "C2", "statement": "已有实证研究直接测量过睡眠与代码审查质量的关系", "type": "scientific", "importance": "high", "status": "unknown", "confidence": 0.0, "time_sensitivity": "evolving"},
+    {"id": "C3", "statement": "企业在排班时能拿到并使用开发者的睡眠数据", "type": "technical", "importance": "high", "status": "unknown", "confidence": 0.0, "time_sensitivity": "evolving"},
+    {"id": "C4", "statement": "团队愿意为审查排班工具改变现有流程", "type": "market", "importance": "medium", "status": "unknown", "confidence": 0.0, "time_sensitivity": "evolving"},
+    {"id": "C5", "statement": "已有面向工程效能的排班或负荷管理产品", "type": "product", "importance": "medium", "status": "unknown", "confidence": 0.0, "time_sensitivity": "evolving"}
   ],
   "queries": {
     "C1": ["academic|sleep deprivation sustained attention performance", "academic|sleep loss cognitive performance meta-analysis", "web|sleep deprivation impact on task accuracy study"],

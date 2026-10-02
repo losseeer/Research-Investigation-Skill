@@ -24,10 +24,12 @@
 
 ## 3. Core Claims
 
-| ID | Claim | Type | Importance | Status | Confidence | Evidence |
-|---|---|---|---|---|---|---|
-| C1 | … | user_problem | high | insufficient_evidence | 0.0 | — |
-| C3 | … | technical | high | supported | 0.8 | E1, E2, E3, E5 |
+| ID | Claim | Type | Importance | Status | Confidence | Time | Evidence |
+|---|---|---|---|---|---|---|---|
+| C1 | … | user_problem | high | insufficient_evidence | 0.0 | timeless | — |
+| C3 | … | technical | high | supported | 0.8 | evolving | E1, E2, E3, E5 |
+
+`Time` = Claim 的 `time_sensitivity`：`evolving` 的成立依赖时间，`timeless` 不依赖。详见 §11。
 
 未裁决即 `insufficient_evidence` 的 Claim 逐条说明**为什么没查到**（引 `evidence_gaps`），
 不得写成「不存在此类工作」。
@@ -103,17 +105,40 @@ Because：{{ analysis.novelty.because }}
 
 ---
 
-## 11. Risks
+## 11. Time Coverage
 
-1. **覆盖缺口**（必填）：列出 `unavailable_channels` 与未执行的检索方向。
-   例如「arXiv 直连 API 返回 429，改用 OpenAlex 覆盖预印本；product 通道未调用」。
-2. 证据风险：核心 Claim 只靠单一来源、证据强度偏低、有相反结论。
-3. 执行风险：来自 §9 的 `research` / `fundamental` 类瓶颈。
-4. 判断不确定处：哪些结论是推断而非证据直接支持。
+> as_of：**{{ time_policy.as_of }}** · 近年窗口：**{{ time_policy.recency_window_years }} 年**（窗口内 = 出版年份 ≥ {{ cutoff_year }}）
+
+「旧证据支撑现状断言」是时效性最典型的静默失效，必须显式交代：
+
+| Claim | Sensitivity | 窗口内证据 | 最新证据年份 | 说明 |
+|---|---|---|---|---|
+| C3 | evolving | 2 | 2025 | 由 2025 复评支撑，结论未过时 |
+| C1 | timeless | n/a | 2019 | 机制性事实，不要求近年证据 |
+
+写作约束：
+
+- `evolving` 且裁决为 `supported` / `partially_supported` 的 Claim **必须有至少一条窗口内证据**。
+  不满足时 `check` 直接报错（不会放行到下一阶段），提示补近年检索 / 改标 `timeless` / 下调裁决。
+- 标 `timeless` 必须写出理由（理论性质、上下界、已确立的机制性事实），写在 Claim 的 `notes` 里。
+  「懒得补检索」不是 `timeless`。
+- 报告里出现「目前 / 现在 / 已能 / 仍是」这类现状措辞时，对应 Claim 必须是 `evolving` 且有窗口内证据。
 
 ---
 
-## 12. Recommendation
+## 12. Risks
+
+1. **覆盖缺口**（必填）：列出 `unavailable_channels` 与未执行的检索方向。
+   例如「arXiv 直连 API 返回 429，改用 OpenAlex 覆盖预印本；product 通道未调用」。
+2. **时效缺口**（必填）：`evolving` Claim 中缺窗口内证据的、以及因此只能给 `insufficient_evidence` 的，
+   逐条写明「结论只对到哪一年成立」。
+3. 证据风险：核心 Claim 只靠单一来源、证据强度偏低、有相反结论。
+4. 执行风险：来自 §9 的 `research` / `fundamental` 类瓶颈。
+5. 判断不确定处：哪些结论是推断而非证据直接支持。
+
+---
+
+## 13. Recommendation
 
 **{{ recommendation.verdict }}**
 
@@ -124,17 +149,17 @@ Rationale：{{ recommendation.rationale }}
 
 ---
 
-## 13. Suggested Next Steps
+## 14. Suggested Next Steps
 
 按「先补哪条证据」排序，每条写清：要验证哪个 Claim、走哪个通道、预期得到什么。
 优先补 `importance == high` 且 `insufficient_evidence` 的 Claim。
 
 ---
 
-## 14. Evidence
+## 15. Evidence
 
-| ID | Source Type | Implementation Level | Strength | Relevance | Title / URL |
-|---|---|---|---|---|---|
-| E1 | academic | paper | high | 0.9 | […](…) |
+| ID | Year | Source Type | Implementation Level | Strength | Relevance | Title / URL |
+|---|---|---|---|---|---|---|
+| E1 | 2025 | academic | paper | high | 0.9 | […](…) |
 
 只列 `relevance >= 0.6` 的条目。低于阈值的证据不进报告。

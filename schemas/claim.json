@@ -22,6 +22,15 @@
       "enum": ["high", "medium", "low"],
       "description": "high Claim 全部裁决完才能进入分析阶段"
     },
+    "time_sensitivity": {
+      "enum": ["timeless", "evolving"],
+      "description": "这条断言的成立是否依赖时间。evolving = 能力边界 / 性能 / 现状类，会随技术代际变化；timeless = 理论性质、上下界、已确立的机制性事实。判定不了时取 evolving（判错代价不对称）"
+    },
+    "recency_window_years": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "覆盖全局 recency_window_years；仅 evolving Claim 有意义"
+    },
     "status": {
       "enum": ["supported", "partially_supported", "contradicted", "unknown", "insufficient_evidence"],
       "description": "unknown = 尚未调查；insufficient_evidence = 已调查但证据不足，禁止推导为「不存在」"

@@ -53,6 +53,13 @@
 - 允许多条（一条论文可以同时支持 C3、反驳 C4）。
 - 不相关就移除，**不要为了凑数挂靠**——挂错了会污染 Claim 裁决与 saturation 计数。
 
+### `publication_year`
+
+- 一律填；拿不到确切年份就填最可能的年份（网页看版权年 / 最后更新，仓库看 release 时间），**不要留空**。
+- 它是时效门禁的唯一依据：`evolving` Claim 要下 `supported` / `partially_supported`，
+  必须有 `publication_year >= as_of年 - recency_window_years` 的证据。年份为空 = 无法证明「现在仍成立」，
+  `check` 会拦（报错里会写明「现有证据年份 未知」）。
+
 ### `query_id`
 
 - 记录该证据是由 `search_plans` 中哪条 query 取回的（`Q…`）。用于复盘时回溯「这条证据从哪个 query
@@ -101,6 +108,7 @@ python3 scripts/validate_state.py set-evidence <state-dir> E3 \
 - [ ] 有没有把 academic 条目标成 `code`（除非确实带仓库链接）？
 - [ ] `claim_ids` 里有没有凑数挂靠？
 - [ ] 每条证据都回填了 `query_id`？若某方向出现 ≥2 条低相关老文，是否记录了信号并补了近年检索？
+- [ ] 每条证据都填了 `publication_year`？`evolving` Claim 有没有窗口内的证据支撑？
 
 ## 出口
 
