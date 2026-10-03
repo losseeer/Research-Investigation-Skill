@@ -97,6 +97,11 @@ product_search    # WebSearch (Product-Lite) + agent-browser 兜底
 仅靠关键词会漏掉强相关工作。seed 论文在执行中涌现即可，无需等输入。
 
 网络：脚本内建回退链 `env proxy → 127.0.0.1:7897 → 标记该通道 unavailable`，不得假定默认代理可用。
+429 / 5xx 指数退避重试后换出口；4xx 不重试（403/407/408 例外，可能是代理层拒绝）。
+**Fetch 限制**：单次响应体 > 2MB 整体丢弃并报错（不截断），单 query 取回条数硬上限 30。
+**缓存**：同一 URL 落在 `<state-dir>/.cache/`，TTL 24h（`--no-cache` / `--cache-dir` / `--cache-ttl-hours`）；
+命中时 `retrieved_at` 记的是**当初抓取时间**，不是本次运行时间——否则旧快照检测会失效。
+端点、限额与各源脾气见 `references/sources.md`。
 
 环境变量：`RESEARCH_MAILTO`（**OpenAlex 必填**，否则稳定 429）、`GITHUB_TOKEN`（可选，自动把 github 通道额度提到 20 query）。
 

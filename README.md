@@ -39,6 +39,7 @@
 - **全通道都有脚本入口**：学术 / GitHub 走检索脚本；`web` / `product` 由 agent 侧执行后走 `add-evidence`（统一做 schema 校验、E 编号、跨源去重、记额度），不手拼 `evidence.jsonl`。检索脚本在取数前就校验 `--query-id` 存在且通道吻合，不存在的 Q 直接拒绝，不留孤儿条目。
 - **query 级记账**：每条检索都挂在 `search_plans` 的某条 Q 上，配额由「已执行收据」派生，同一条重复执行不重复扣。`by_channel` 计数手写无效——预算花在哪次检索上全程可回溯。
 - **预算档位**：`quick` / `standard` / `deep` 三档，同时控制检索额度与饱和判据阈值（详见「快速开始」第 4 步）。
+- **可控的网络代价**：429 / 5xx 指数退避后自动换出口重试（4xx 不重试），同一 URL 24 小时内的响应走磁盘缓存不重复抓；单次响应超 2MB 直接判失败而不截断，单条 query 最多取回 30 条。缓存命中的证据记录的是**当初抓取时间**，不是本次运行时间。
 - **自动收口**：`stop-check` 按档位阈值判定证据饱和、把 Claim 标记为 stopped 并给出 CONTINUE / FINALIZE 判决；`topk` 按相关度裁剪本轮进上下文的证据（≤10 条）。预算耗尽时强制出报告，不会无限搜索也不会硬凑结论。
 - **时效门禁**：每条 Claim 标注 `timeless`（永真事实：理论性质、上下界、已确立机制）或 `evolving`（能力边界 / 性能 / 现状，会随技术代际变化）。`evolving` Claim 要给出「目前仍成立」的结论，必须有近 2 年内的证据（窗口可按 Claim 或全局调整），否则校验直接拦下——不会让两年前的 LLM 结论冒充今天的现状。年份口径统一为「现状时点」（GitHub 取最后一次 push 的年，不是创建年），证据抓取时间距基准日过久也会提醒是旧快照。
 - **15 节调研报告**：从执行摘要、主张清单、已有工作综述，到瓶颈分析、时效声明、风险声明和建议的下一步，结构完整可直接用于汇报。
@@ -147,7 +148,8 @@ python3 scripts/validate_state.py init --idea "<idea>" --recency-window 5
 ### 5. 验证安装（可选）
 
 ```bash
-python3 tests/test_validate_state.py   # 72 项：schema / 预算 / 档位 / query 记账 / 自动饱和 / 时效门禁 / 写回 / 收口
+python3 tests/test_validate_state.py   # 79 项：schema / 预算 / 档位 / query 记账 / 自动饱和 / 时效门禁 / 写回 / 收口
+python3 tests/test_network.py          # 15 项：Fetch 上限 / 重试退避 / 缓存（全离线，不真出网）
 python3 tests/test_pipeline.py         # 7 项：全链路离线回归（含 MODIFY / PIVOT 与过时证据拦截）
 ```
 
@@ -197,7 +199,6 @@ Idea → Claims → 多通道搜索 → Evidence → 逐条裁决
 
 ## TODO
 
-- [ ] 增加 Fetch 限制：单次抓取的条数与字节上限，避免长页面把上下文打满。
-- [ ] 优化网络重试、缓存并补充回归测试。
 - [ ] 同一 URL 内容随时间变化（产品页能力 / 价格）时，改为**新增一条 Evidence** 而不是给旧条目加时点字段——
       这会计入去重口径的改动（`normalize_url` 现按 URL 去重），等真遇到该场景再做。
+- [ ] web / product 通道（Agent 侧 WebFetch）尚无字节与条数上限，目前只覆盖脚本侧的 academic / github。

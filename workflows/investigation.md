@@ -179,6 +179,17 @@ python3 scripts/validate_state.py finalize <dir> --reason "预算耗尽："
 脚本失败会自动写 `unavailable_channels[]`（`mark_unavailable`）。循环里看到某通道
 unavailable 后，不要再对它发起请求，改走替代路径（见 `references/sources.md`）。
 
+限流（429 / 5xx）与代理层拒绝（403）由网络层自己处理：指数退避 → 换回退出口。
+**重试不是免费的**：它吃的是墙钟而不是 query 额度，一轮里若多个源都在退避，
+先换通道（`--source crossref`）比干等更划算——OpenAlex 出现过持续数十秒的 503 窗口，退避无效。
+
+## 网络代价
+
+- 同一 URL 24 小时内不重复抓（`<state-dir>/.cache/`）。重跑同一条 query、或跨轮续跑时直接命中，
+  但**命中的证据 `retrieved_at` 是当初抓取的时间**，别把它当刚抓的。
+- 单次响应体 > 2MB 直接判失败，不会截断；单 query 最多取回 30 条（`--max-results` 更大也没用）。
+- 缓存只是省网络，不是数据源：过期或损坏都退回真实抓取。
+
 ## 每轮必看
 
 ```bash

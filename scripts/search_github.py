@@ -22,13 +22,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import validate_state as vs  # noqa: E402
-from _common import http_get_json, now_iso  # noqa: E402
+from _common import (DEFAULT_CACHE_TTL_HOURS, MAX_RESULTS_PER_QUERY,  # noqa: E402
+                     clamp_results, http_get_json, now_iso)
 
 API = "https://api.github.com/search/repositories"
 TOKEN_CAP = 20
 
 
-def from_repo(r: dict, claim_ids) -> dict:
+def from_repo(r: dict, claim_ids, retrieved_at=None) -> dict:
     stars = r.get("stargazers_count") or 0
     desc = (r.get("description") or "").strip()
     topics = ", ".join((r.get("topics") or [])[:6])
@@ -57,7 +58,7 @@ def from_repo(r: dict, claim_ids) -> dict:
         "strength": "high" if stars >= 500 else "medium",
         "implementation_level": "code",
         "changes_judgment": False,
-        "retrieved_at": now_iso(),
+        "retrieved_at": retrieved_at or now_iso(),
     }
 
 
@@ -70,6 +71,11 @@ def main():
     p.add_argument("--claim-ids", default="")
     p.add_argument("--query-id", default="",
                    help="search_plans 中对应的 Q id；传了 --state-dir 就必须传，用于 query 级记账")
+    p.add_argument("--cache-dir", default="",
+                   help="HTTP 响应缓存目录；默认在 --state-dir 下的 .cache（--no-cache 关闭）")
+    p.add_argument("--no-cache", action="store_true", help="禁用缓存")
+    p.add_argument("--cache-ttl-hours", type=float, default=DEFAULT_CACHE_TTL_HOURS,
+                   help=f"缓存有效期（默认 {DEFAULT_CACHE_TTL_HOURS} 小时）")
     args = p.parse_args()
 
     if args.state_dir and not args.query_id:
@@ -98,19 +104,29 @@ def main():
                 vs.save_state(path, state)
                 print(f"GITHUB_TOKEN detected: github max_queries -> {TOKEN_CAP}")
 
+    if args.max_results > MAX_RESULTS_PER_QUERY:
+        print(f"WARN: --max-results {args.max_results} 超过硬上限，已夹到 {MAX_RESULTS_PER_QUERY}",
+              file=sys.stderr)
+    cache_dir = "" if args.no_cache else (args.cache_dir or
+                                          (str(Path(args.state_dir) / ".cache") if args.state_dir else ""))
+
     q = args.query + (f" stars:>={args.min_stars}" if args.min_stars else "")
     url = API + "?" + urllib.parse.urlencode({
-        "q": q, "per_page": min(args.max_results, 30), "sort": "stars", "order": "desc",
+        "q": q, "per_page": clamp_results(args.max_results), "sort": "stars", "order": "desc",
     })
 
-    data, err = http_get_json(url, headers=headers)
+    stats = {}
+    data, err = http_get_json(url, headers=headers, cache_dir=cache_dir,
+                              ttl_hours=args.cache_ttl_hours, stats=stats)
     if data is None:
         if args.state_dir:
             vs.mark_unavailable(args.state_dir, "github", str(err))
         print(f"FATAL: github 检索失败 -> {err}", file=sys.stderr)
         return 1
+    if stats.get("source") == "cache":
+        print(f"cache hit: {url}（取回于 {stats.get('fetched_at')}）", file=sys.stderr)
 
-    candidates = [from_repo(r, claim_ids) for r in (data.get("items") or [])]
+    candidates = [from_repo(r, claim_ids, stats.get("fetched_at")) for r in (data.get("items") or [])]
 
     if not args.state_dir:
         print(json.dumps(candidates, ensure_ascii=False, indent=2))

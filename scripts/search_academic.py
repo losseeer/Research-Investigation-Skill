@@ -24,7 +24,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import validate_state as vs  # noqa: E402
-from _common import http_get, http_get_json, now_iso  # noqa: E402
+from _common import (DEFAULT_CACHE_TTL_HOURS, MAX_RESULTS_PER_QUERY,  # noqa: E402
+                     clamp_results, http_get, http_get_json, now_iso)
 
 DEFAULT_MAILTO = os.environ.get("RESEARCH_MAILTO", "")
 SOURCES = ("openalex", "crossref", "arxiv")
@@ -58,7 +59,7 @@ def _strip_tags(s: str) -> str:
     return html.unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", s or "")).strip())
 
 
-def from_openalex(w: dict, claim_ids) -> dict:
+def from_openalex(w: dict, claim_ids, retrieved_at=None) -> dict:
     inv = w.get("abstract_inverted_index") or {}
     abstract = _abstract_from_inverted(inv)
     venue = ((w.get("primary_location") or {}).get("source") or {}).get("display_name") or ""
@@ -81,11 +82,11 @@ def from_openalex(w: dict, claim_ids) -> dict:
         "strength": "high" if cited >= 20 else "medium",
         "implementation_level": "paper",
         "changes_judgment": False,
-        "retrieved_at": now_iso(),
+        "retrieved_at": retrieved_at or now_iso(),
     }
 
 
-def from_crossref(it: dict, claim_ids) -> dict:
+def from_crossref(it: dict, claim_ids, retrieved_at=None) -> dict:
     title = _strip_tags((it.get("title") or ["(untitled)"])[0])
     venue = _strip_tags((it.get("container-title") or [""])[0])
     year = ((it.get("issued") or {}).get("date-parts") or [[None]])[0][0]
@@ -107,11 +108,11 @@ def from_crossref(it: dict, claim_ids) -> dict:
         "strength": "medium",
         "implementation_level": "paper",
         "changes_judgment": False,
-        "retrieved_at": now_iso(),
+        "retrieved_at": retrieved_at or now_iso(),
     }
 
 
-def from_arxiv(entry, claim_ids) -> dict:
+def from_arxiv(entry, claim_ids, retrieved_at=None) -> dict:
     def txt(tag, default=""):
         el = entry.find(ATOM + tag)
         return (el.text or default).strip() if el is not None else default
@@ -135,14 +136,14 @@ def from_arxiv(entry, claim_ids) -> dict:
         "strength": "medium",
         "implementation_level": "paper",
         "changes_judgment": False,
-        "retrieved_at": now_iso(),
+        "retrieved_at": retrieved_at or now_iso(),
     }
 
 
 # --------------------------------------------------------------------------
 # 各源抓取
 # --------------------------------------------------------------------------
-def fetch_openalex(query, max_results, mailto):
+def fetch_openalex(query, max_results, mailto, cache_dir=None, stats=None):
     # 引文展开：query 以 cites: / referenced_works: 开头时走引文 filter，
     # 不能塞进 title_and_abstract.search（否则恒返回 0 条）。
     if query.startswith(("cites:", "referenced_works:")):
@@ -160,13 +161,13 @@ def fetch_openalex(query, max_results, mailto):
     if mailto:
         params["mailto"] = mailto
     url = "https://api.openalex.org/works?" + urllib.parse.urlencode(params)
-    data, err = http_get_json(url)
+    data, err = http_get_json(url, cache_dir=cache_dir, stats=stats)
     if data is None:
         return [], err
     return data.get("results", []), None
 
 
-def fetch_crossref(query, max_results, mailto):
+def fetch_crossref(query, max_results, mailto, cache_dir=None, stats=None):
     params = {
         "query": query,
         "rows": min(max_results, 50),
@@ -175,20 +176,20 @@ def fetch_crossref(query, max_results, mailto):
     if mailto:
         params["mailto"] = mailto
     url = "https://api.crossref.org/works?" + urllib.parse.urlencode(params)
-    data, err = http_get_json(url)
+    data, err = http_get_json(url, cache_dir=cache_dir, stats=stats)
     if data is None:
         return [], err
     return (data.get("message") or {}).get("items", []), None
 
 
-def fetch_arxiv(query, max_results):
+def fetch_arxiv(query, max_results, cache_dir=None, stats=None):
     params = {
         "search_query": f"all:{query}",
         "max_results": min(max_results, 30),
         "sortBy": "relevance",
     }
     url = "http://export.arxiv.org/api/query?" + urllib.parse.urlencode(params)
-    text, err = http_get(url, accept="application/atom+xml")
+    text, err = http_get(url, accept="application/atom+xml", cache_dir=cache_dir, stats=stats)
     if text is None:
         return [], err
     try:
@@ -218,6 +219,11 @@ def main():
     p.add_argument("--query-id", default="",
                    help="search_plans 中对应的 Q id；传了 --state-dir 就必须传，用于 query 级记账")
     p.add_argument("--mailto", default=DEFAULT_MAILTO)
+    p.add_argument("--cache-dir", default="",
+                   help=f"HTTP 响应缓存目录；默认在 --state-dir 下的 .cache（--no-cache 关闭）")
+    p.add_argument("--no-cache", action="store_true", help="禁用缓存")
+    p.add_argument("--cache-ttl-hours", type=float, default=DEFAULT_CACHE_TTL_HOURS,
+                   help=f"缓存有效期（默认 {DEFAULT_CACHE_TTL_HOURS} 小时）")
     args = p.parse_args()
 
     if args.state_dir and not args.query_id:
@@ -240,17 +246,28 @@ def main():
     claim_ids = [c.strip() for c in args.claim_ids.split(",") if c.strip()]
     sources = SOURCES if args.source == "all" else (args.source,)
 
+    # 单条 query 取回条数硬上限：抓得再多进上下文的也只有 10 条，多的部分是纯浪费
+    if args.max_results > MAX_RESULTS_PER_QUERY:
+        print(f"WARN: --max-results {args.max_results} 超过硬上限，已夹到 {MAX_RESULTS_PER_QUERY}",
+              file=sys.stderr)
+    max_results = clamp_results(args.max_results)
+    cache_dir = "" if args.no_cache else (args.cache_dir or
+                                          (str(Path(args.state_dir) / ".cache") if args.state_dir else ""))
+
     candidates, failures = [], []
     for src in sources:
+        stats = {}
         if src == "openalex":
-            raw, err = fetch_openalex(args.query, args.max_results, args.mailto)
-            items = [from_openalex(w, claim_ids) for w in raw]
+            raw, err = fetch_openalex(args.query, max_results, args.mailto, cache_dir, stats)
+            items = [from_openalex(w, claim_ids, stats.get("fetched_at")) for w in raw]
         elif src == "crossref":
-            raw, err = fetch_crossref(args.query, args.max_results, args.mailto)
-            items = [from_crossref(w, claim_ids) for w in raw]
+            raw, err = fetch_crossref(args.query, max_results, args.mailto, cache_dir, stats)
+            items = [from_crossref(w, claim_ids, stats.get("fetched_at")) for w in raw]
         else:
-            raw, err = fetch_arxiv(args.query, args.max_results)
-            items = [from_arxiv(e, claim_ids) for e in raw]
+            raw, err = fetch_arxiv(args.query, max_results, cache_dir, stats)
+            items = [from_arxiv(e, claim_ids, stats.get("fetched_at")) for e in raw]
+        if stats.get("source") == "cache":
+            print(f"cache hit: {src}（取回于 {stats.get('fetched_at')}）", file=sys.stderr)
 
         if err:
             failures.append(f"{src}: {err}")
