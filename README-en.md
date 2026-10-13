@@ -197,6 +197,11 @@ Six stages (each stage exit is gated by automatic validation — failure blocks 
 
 ## TODO
 
+- [ ] **Query status is not written back on the agent side** — `add-evidence` does not touch `query.status`, so
+      queries served through `web` / `product` stay `pending` forever. That inflates `closure.pending_queries` at
+      closure, and `check` cannot see it (it only warns on done / failed queries that were never charged).
+- [ ] **Prior Art does not validate relevance** — `prior_art.evidence_ids` may point at evidence with
+      `relevance < 0.6`, contradicting the rule that the report only loads items at `relevance >= 0.6`.
 - [ ] When a URL's content changes over time (product capability / pricing pages), emit a **new Evidence entry**
       rather than adding time fields to the old one — this touches the dedupe rule (URL-based today); do it when
       the case actually shows up.

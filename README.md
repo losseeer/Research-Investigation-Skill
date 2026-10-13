@@ -197,6 +197,10 @@ Idea → Claims → 多通道搜索 → Evidence → 逐条裁决
 
 ## TODO
 
+- [ ] **agent 侧 query 状态未回写**：`add-evidence` 不改动 `query.status`，走 web / product 的 query 会一直停在 `pending`——
+      收口时 `closure.pending_queries` 因此偏高，`check` 也发现不了（它只对 done / failed 但没计费的告警）。
+- [ ] **Prior Art 未校验 relevance**：`prior_art.evidence_ids` 能引用 `relevance < 0.6` 的证据，
+      与「报告只载入 relevance ≥ 0.6 的条目」口径不一致。
 - [ ] 同一 URL 内容随时间变化（产品页能力 / 价格）时，改为**新增一条 Evidence** 而不是给旧条目加时点字段——
       这会计入去重口径的改动（`normalize_url` 现按 URL 去重），等真遇到该场景再做。
 - [ ] web / product 通道（Agent 侧 WebFetch）尚无字节与条数上限，目前只覆盖脚本侧的 academic / github。
