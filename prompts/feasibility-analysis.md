@@ -61,7 +61,7 @@
 | 字段 | 说明 |
 |---|---|
 | `level` | `none` / `incremental` / `moderate` / `significant` / `breakthrough` |
-| `because` | **只能引用 `prior_art.difference` 与 Evidence**，禁止抽象断言 |
+| `because` | **只能引用 `prior_art.difference` 与 Evidence**，禁止抽象断言；写法同报告：严谨陈述、结论先行，一句说完，不带修饰性形容词 |
 | `based_on_prior_art_ids` | 支撑该判定的 prior art 编号 |
 
 ### 与 prior art 的对应关系

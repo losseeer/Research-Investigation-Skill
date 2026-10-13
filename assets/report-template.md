@@ -1,5 +1,10 @@
 # Idea Research Report
 
+> 本节以下的**说明文字是写作指令，不进正文**。
+> 语言：跟随用户输入——用户用中文提 Idea 就写中文正文，用英文就写英文（Evidence 原文摘录可保留原文）。
+> 语气：严谨学术，结论先行，陈述句，不带修饰性形容词。
+> 篇幅：同一结论只在一处展开，其余节引用 Claim ID；不写过渡句、总结套话与通用背景介绍。
+
 > Idea：{{ idea.title }}
 > Domain：{{ idea.domain }} · 生成时间：{{ generated_at }}
 > 状态：{{ status }} · 检索：{{ used_queries }}/{{ max_queries }} query · {{ evidence_count }} 条 Evidence

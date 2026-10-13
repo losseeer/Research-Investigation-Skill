@@ -204,6 +204,9 @@ python3 scripts/validate_state.py stop-check <dir>     # 自动饱和判定 + CO
    否则复查时无法证明它到底跑没跑；每条 Evidence 记录 `query_id` 以回溯它从哪条 query 进入候选池。
 8. **现状断言必须有近年证据**：`evolving` Claim 的 `supported` / `partially_supported` 只能由窗口内证据支撑；
    标 `timeless` 必须写出理由（写在 Claim `notes`），「懒得补检索」不算。
+9. **报告语言跟随用户输入**（中文提 Idea → 中文正文，英文提 → 英文；Evidence 原文摘录保留原文）。
+   语气严谨学术、结论先行：不带修饰性形容词，不写过渡套话与通用背景介绍，
+   同一结论只在一处展开、其余处引 Claim ID。
 
 ## Resources
 

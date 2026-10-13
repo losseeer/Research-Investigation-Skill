@@ -51,6 +51,9 @@ confidence 是给后续排序和报告措辞用的，不是信心投票——同
 必须引用具体的 Evidence 编号（`E1`、`E7`），不能写「有研究表明」这类无指向的陈述。
 门禁会检查：裁决态非 `insufficient_evidence` 时 `supporting` / `contradicting` 至少有一个非空。
 
+写作用同一套口径（它会原样进报告 §3 / §13）：严谨学术、结论先行——**先写裁决结论，再写依据**；
+一句说完，不重复 Claim 的 statement，不加修饰性形容词；正反证据都在时点明分歧在哪条证据上。
+
 ## 反向 Claim
 
 `decompose` 阶段刻意留的「若成立则 Idea 不成立」的 Claim 要单独留意：
