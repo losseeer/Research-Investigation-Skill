@@ -137,11 +137,17 @@ Because：{{ analysis.novelty.because }}
 
 ## 12. Risks
 
+0. **收口方式**（必填，读 `state.closure`）：先声明这次是「查全了才收口」还是「查不动了才收口」。
+   - `all_high_judged` / `saturated`：所有 high Claim 已裁决或已饱和，属正常收口。
+   - `budget_exhausted` / `iteration_cap` / `agent_stop`：**没查完**。
+     必须接着写 `closure.unresolved_high_claims`、收口时还剩多少条 query 没跑、
+     以及 `iterations / max_iterations`。这些结论是「没查到」，不是「不存在」。
 1. **覆盖缺口**（必填）：列出 `unavailable_channels` 与未执行的检索方向。
    例如「arXiv 直连 API 返回 429，改用 OpenAlex 覆盖预印本；product 通道未调用」。
 2. **时效缺口**（必填）：`evolving` Claim 中缺窗口内证据的、以及因此只能给 `insufficient_evidence` 的，
    逐条写明「结论只对到哪一年成立」。
 3. 证据风险：核心 Claim 只靠单一来源、证据强度偏低、有相反结论。
+   **单通道支撑**也写在这里——有效证据全来自一个通道时 independence 会虚高（同通道不同来源仍计独立）。
 4. 执行风险：来自 §9 的 `research` / `fundamental` 类瓶颈。
 5. 判断不确定处：哪些结论是推断而非证据直接支持。
 

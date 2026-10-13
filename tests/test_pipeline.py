@@ -153,8 +153,9 @@ class TestFullPipeline(unittest.TestCase):
         return c
 
     def test_fixtures_loaded(self):
-        self.assertEqual(len(FIXTURES), 8,
-                         "应有 8 个 fixture：01–04 正例路径 + 05 坏分解 + 06 MODIFY + 07 PIVOT + 08 过时证据")
+        self.assertEqual(len(FIXTURES), 9,
+                         "应有 9 个 fixture：01–04 正例路径 + 05 坏分解 + 06 MODIFY + 07 PIVOT "
+                         "+ 08 过时证据 + 09 缺主通道")
 
     def test_positive_fixtures_run_to_report(self):
         for path in FIXTURES:

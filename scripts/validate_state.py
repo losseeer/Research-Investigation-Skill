@@ -31,6 +31,20 @@ PROFILE_NAMES = ("quick", "standard", "deep")
 # 老 state（profile 字段写入之前建的）没有 saturation 阈值时的兜底值，
 # 与 standard 档一致。用到时必须显式提示，不允许静默降级。
 SATURATION_DEFAULTS = {"min_independent": 3, "max_rounds_without_change": 2, "duplicate_rate": 0.6}
+# Claim type → 主通道。Claim 的 type 决定「该去哪找证据」：
+# 科学断言查论文、技术实现查代码、产品/市场现状查 web/product。
+# 计划里缺主通道 = 该 Claim 从一开始就没指向对的地方，stage 2 出口拦。
+PRIMARY_CHANNEL = {
+    "scientific": "academic",
+    "novelty": "academic",
+    "technical": "github",
+    "application": "github",
+    "product": "product",
+    "market": "web",
+    "user_problem": "web",
+}
+# 收口原因枚举：区分「找够了」和「没预算了」，后者必须显式写进报告。
+CLOSURE_KINDS = ("all_high_judged", "saturated", "budget_exhausted", "iteration_cap", "agent_stop")
 
 
 def load_profiles():
@@ -401,19 +415,37 @@ def finish_query(state_dir, qid: str, status: str, result_count: int = None, cha
 
 
 def executable_queries(state: dict):
-    """还能执行的 query：status pending 且所属通道仍有 query 额度。"""
+    """还能执行的 query：status pending 且所属通道仍有 query 额度。
+
+    排序（预算随时可能耗尽，顺序决定先啃哪块）：
+      high Claim → 未裁决 → 未饱和 → 该 Claim type 的主通道 → 计划原序。
+    """
     counts = derived_query_counts(state)
     by_ch = state.get("search_budget", {}).get("by_channel", {})
-    out = []
+    judged = {j.get("claim_id") for j in state.get("judgments", [])}
+    sat = state.get("saturation", {})
+    imp_rank = {"high": 0, "medium": 1, "low": 2}
+    claim_order = {c.get("id"): i for i, c in enumerate(state.get("claims", []))}
+    scored = []
     for p in state.get("search_plans", []):
+        cid = p.get("claim_id")
+        c = next((x for x in state.get("claims", []) if x.get("id") == cid), {})
+        primary = PRIMARY_CHANNEL.get(c.get("type"))
         for q in p.get("queries", []):
             if (q.get("status") or "pending") != "pending":
                 continue
             ch = q.get("channel")
             cap = by_ch.get(ch, {}).get("max_queries", 0)
-            if counts.get(ch, 0) < cap:
-                out.append((p.get("claim_id"), q))
-    return out
+            if counts.get(ch, 0) >= cap:
+                continue
+            key = (imp_rank.get(c.get("importance"), 3),
+                   1 if cid in judged else 0,
+                   1 if sat.get(cid, {}).get("stopped") else 0,
+                   0 if ch == primary else 1,
+                   claim_order.get(cid, 99))
+            scored.append((key, len(scored), (cid, q)))
+    scored.sort(key=lambda x: (x[0], x[1]))
+    return [item for _k, _i, item in scored]
 
 
 def consume_budget(state_dir, channel: str, queries: int = 0, results: int = 0) -> dict:
@@ -435,6 +467,25 @@ def consume_budget(state_dir, channel: str, queries: int = 0, results: int = 0) 
     sync_budget(state)
     save_state(path, state)
     return dict(cur)
+
+
+def advance_iterations(state: dict, n: int = 1, clamp: bool = False) -> int:
+    """推进 iterations。clamp=True 时夹在上限内（自动推进用），否则超上限抛 ValueError。
+
+    历史故障：唯一的记账入口 `consume` 读了一个已被删除的参数，调用必崩，
+    导致 iterations 恒为 0、迭代上限这道门在多次调研里从未生效。
+    现在由 `stop-check` 自动推进，不依赖 agent 记得手动调用。
+    """
+    b = state.setdefault("search_budget", {})
+    max_iters = int(b.get("max_iterations") or 0)
+    cur = int(b.get("iterations") or 0)
+    nxt = cur + int(n)
+    if max_iters and nxt > max_iters:
+        if not clamp:
+            raise ValueError(f"iterations {nxt} 超过上限 {max_iters}")
+        nxt = max_iters
+    b["iterations"] = nxt
+    return nxt
 
 
 def mark_unavailable(state_dir, channel: str, reason: str):
@@ -588,6 +639,29 @@ def cross_check(state: dict, evidence: list, errors: list, warnings: list):
             f"补近年检索；或确认其为永真事实后标 time_sensitivity=timeless；"
             f"或改判 partially_supported / insufficient_evidence 并在 rationale 写明结论的适用时点")
 
+    # 单通道告警：independence 按 (source, source_type) 去重，同通道的不同来源照样算独立，
+    # 于是「16 条 academic 证据」能凑出 independence=8 并判饱和——判据在这里虚高。
+    # 实测多份调研里这类 Claim 恰好是核心 Claim，所以按 importance 分别措辞。
+    for c in state.get("claims", []):
+        cid = c.get("id")
+        if verdict_status(state, c) not in POSITIVE_VERDICTS:
+            continue
+        evs = [e for e in evidence if cid in e.get("claim_ids", [])
+               and e.get("relevance", 0) >= MIN_REPORT_RELEVANCE]
+        chans = sorted({e.get("channel") for e in evs if e.get("channel")})
+        if len(evs) < 2 or len(chans) != 1:
+            continue
+        primary = PRIMARY_CHANNEL.get(c.get("type"))
+        if chans[0] == primary:
+            alt = [x for x in CHANNELS if x != chans[0]]
+            fix = f"补一个副通道（如 {alt[0]}）"
+        else:
+            fix = f"补该 type 的主通道 {primary or '—'}"
+        who = "high Claim" if c.get("importance") == "high" else "Claim"
+        warnings.append(
+            f"{who} {cid} 的 {len(evs)} 条有效证据全部来自 {chans[0]} 通道：{fix}。"
+            f"补不了就在 rationale 写明「结论仅由单一通道支撑」，不要让饱和判据替它背书")
+
     for j in state.get("judgments", []):
         if j.get("claim_id") not in claim_ids:
             errors.append(f"judgment: claim_id {j.get('claim_id')} 不存在")
@@ -634,6 +708,18 @@ def cross_check(state: dict, evidence: list, errors: list, warnings: list):
         warnings.append("存在 relevance>=0.8 的学术证据但 search_plans 无引文展开(cites:)检索 —— "
                         "建议对高相关 seed 补一次 citations / referenced_works 反向追踪")
 
+    # 排了计划但某通道一条 query 都没有：实测多份调研里额度没花完的真正原因不是分配错，
+    # 而是 planning 根本没往那个通道排。额度耗尽后才发现，已经没预算补了。
+    if int(state.get("stage") or 0) >= 2:
+        planned_ch = {q.get("channel") for p in state.get("search_plans", [])
+                      for q in p.get("queries", [])}
+        idle = [ch for ch in CHANNELS
+                if state.get("search_budget", {}).get("by_channel", {}).get(ch, {}).get("max_queries", 0) > 0
+                and ch not in planned_ch]
+        if idle:
+            warnings.append(f"通道 {', '.join(idle)} 有额度但 search_plans 里 0 条 query —— "
+                            f"额度没花完通常不是分配问题而是没排；在 stage 2 就补，别等耗尽再补")
+
     # 未裁决的 high claim 只提示，不阻断
     if state.get("status") in ("analyzed", "reported"):
         undecided = [c["id"] for c in state.get("claims", [])
@@ -676,6 +762,14 @@ def check_stage(state: dict, stage: int, errors: list):
                     errors.append(f"stage 2 出口: {c['id']} 只有 {len(qs)} 条 query (<3)")
                 elif len(channels) < 2:
                     errors.append(f"stage 2 出口: {c['id']} 的 query 未跨通道")
+                # 主通道覆盖：Claim 的 type 决定「该去哪找证据」。缺主通道 = 从一开始就找错地方，
+                # 后面 independence 再高也是在同一条错路上堆量。
+                primary = PRIMARY_CHANNEL.get(c.get("type"))
+                if primary and primary not in channels:
+                    errors.append(
+                        f"stage 2 出口: {c['id']} (type={c.get('type')}) 的 query 未覆盖主通道 {primary}"
+                        f"（现存 {sorted(x for x in channels if x)}）——"
+                        f"科学断言查论文、技术实现查代码、产品/市场现状查 web/product")
     if stage >= 4:
         judged = {j.get("claim_id") for j in state.get("judgments", [])}
         for c in claims:
@@ -727,6 +821,10 @@ def saturation_rows(state: dict, evidence: list, th=None):
             if e.get("relevance", 1.0) < 0.6 and (e.get("publication_year") or 0) <= this_year - 8
         ]
         old_low_cnt = len(old_low)
+        # 有效证据 = 进报告的那批（relevance >= 0.6）。通道覆盖看的是它们，不是全部召回。
+        qual = [e for e in evs if e.get("relevance", 0) >= MIN_REPORT_RELEVANCE]
+        channels = sorted({e.get("channel") for e in qual if e.get("channel")})
+        single_channel = len(qual) >= 2 and len(channels) == 1
         flags = []
         if independent >= min_ind:
             flags.append(f"independence>={min_ind}")
@@ -753,6 +851,9 @@ def saturation_rows(state: dict, evidence: list, th=None):
             "duplicate_rate": dup_rate,
             "rounds_without_change": rounds,
             "old_low_rel": old_low_cnt,
+            "qualified": len(qual),
+            "channels": channels,
+            "single_channel": single_channel,
             "recent": recent,
             "cutoff": recent_cutoff(state, c),
             "time_sensitivity": "evolving" if evolving else "timeless",
@@ -875,15 +976,19 @@ def cmd_saturation(args):
         print(line)
     else:
         print("retrieved=-  (证据未记录 retrieved_at)")
-    print(f"{'claim':<8}{'ev':>4}{'indep':>7}{'chg':>5}{'dup':>7}{'oldLR':>7}"
-          f"{'recent':>7}{'rounds':>8}  flags")
+    print(f"{'claim':<8}{'ev':>4}{'qual':>6}{'indep':>7}{'chg':>5}{'dup':>7}{'oldLR':>7}"
+          f"{'recent':>7}{'rounds':>8}  channels")
     for r in rows:
         recent = f"{r['recent']}/{r['cutoff']}" if r["time_sensitivity"] == "evolving" else "n/a"
-        print(f"{r['claim_id']:<8}{r['evidence']:>4}{r['independent']:>7}{r['changes_judgment']:>5}"
+        chans = ",".join(r["channels"]) or "-"
+        if r["single_channel"]:
+            chans += "  ⚠单通道"
+        print(f"{r['claim_id']:<8}{r['evidence']:>4}{r['qualified']:>6}{r['independent']:>7}"
+              f"{r['changes_judgment']:>5}"
               f"{r['duplicate_rate']:>7}{r['old_low_rel']:>7}{recent:>7}"
-              f"{r['rounds_without_change']:>8}  "
-              f"{'SATURATED ' if r['saturated'] else '-'}"
-              f"{','.join(r['flags'] + r['advice']) or '(未饱和)'}")
+              f"{r['rounds_without_change']:>8}  {chans}")
+        tail = ",".join(r["flags"] + r["advice"]) or "(未饱和)"
+        print(f"{'':<8}{'SATURATED ' if r['saturated'] else '-'}{tail}")
     return 0
 
 
@@ -1126,7 +1231,22 @@ def cmd_finalize(args):
     """
     state_dir = Path(args.dir)
     state, path = load_state(state_dir)
+    evidence, _bad = load_evidence(state_dir)
     judged = {j.get("claim_id") for j in state.get("judgments", [])}
+
+    # 补跑一次 stop-check（不推进迭代）：多次调研在 finalize 时 saturation 为空，
+    # 事后无法区分「找够了」和「没预算了」。closure 由这里兜底落盘。
+    if not state.get("closure"):
+        res = evaluate_stop(state, evidence, advance=False)
+        if res["verdict"] == "FINALIZE":
+            pass  # evaluate_stop 已写 closure
+        else:
+            state["closure"] = build_closure(
+                "agent_stop",
+                f"agent 主动收口；stop-check 当时判 CONTINUE（{res['reason']}）",
+                res["iterations"], res["max_iterations"], len(res["pending"]),
+                res["unresolved_high"], res["stopped_high"],
+                agent_reason=(args.reason or "").strip())
 
     filled = 0
     for c in state.get("claims", []):
@@ -1157,6 +1277,11 @@ def cmd_finalize(args):
         return 1
     save_state(path, state)
     print(f"finalize: 补齐 {filled} 条未裁决 Claim（status -> verified）")
+    cl = state.get("closure", {})
+    print(f"closure[{cl.get('kind')}]: {cl.get('reason')}")
+    if cl.get("kind") in ("budget_exhausted", "agent_stop") and cl.get("unresolved_high_claims"):
+        print(f"  ⚠ 未裁决 high Claim {cl['unresolved_high_claims']} —— "
+              f"结论是「没查到」，不是「不存在」，必须写进报告 §12 覆盖缺口")
     return 0
 
 
@@ -1165,6 +1290,7 @@ DEFAULT_RECENCY_WINDOW_YEARS = 2  # evolving Claim 需要「近年证据」的�
 DEFAULT_TIME_SENSITIVITY = "evolving"  # 缺字段时取保守值：宁可多查一轮，也不让过时结论蒙混
 POSITIVE_VERDICTS = ("supported", "partially_supported")  # 只有正向裁决才需要「近年证据」背书
 STALE_SNAPSHOT_DAYS = 180  # 证据取回时间距 as_of 超过这个天数 → 提醒是旧快照（warning，不阻断）
+MIN_REPORT_RELEVANCE = 0.6  # 报告阶段只载入 relevance >= 0.6 的条目（低于此不计入有效证据）
 
 
 def time_policy(state: dict) -> dict:
@@ -1244,20 +1370,20 @@ def retrieved_span(evidence: list) -> dict:
     return {"n": len(days), "oldest": days[0] if days else None, "newest": days[-1] if days else None}
 
 
-def cmd_stop_check(args):
-    """自动 Evidence Saturation：把已达饱和判据的 Claim 落盘为 stopped，并给出循环判决。
+def evaluate_stop(state: dict, evidence: list, advance: bool = False) -> dict:
+    """计算饱和状态 + 循环判决（把 stopped / closure 写进 state，不打印）。
+
+    advance=True 时把 iterations 推进一轮并夹在上限内。迭代计数由本函数负责——
+    让 agent 手动 `consume --iterations` 已被证明不可靠（实测多次调研里恒为 0）。
 
     判决优先级：
-      1. 所有 importance=high 的 Claim 已裁决              → FINALIZE
-      2. 所有 high Claim 均已饱和（stopped）                → FINALIZE
-      3. 无可执行的 query（额度耗尽或没有 pending）          → FINALIZE
-      4. iterations >= max_iterations                       → FINALIZE
-      否则 CONTINUE，并给出下一步建议。
+      1. 所有 importance=high 的 Claim 已裁决              → FINALIZE (all_high_judged)
+      2. 所有 high Claim 均已饱和（stopped）                → FINALIZE (saturated)
+      3. 无可执行的 query（额度耗尽或无 pending）          → FINALIZE (budget_exhausted)
+      4. iterations >= max_iterations                       → FINALIZE (iteration_cap)
+      否则 CONTINUE——时效缺口（stale）即使还有额度也不许拿旧结论收口。
     """
-    state_dir = Path(args.dir)
-    state, path = load_state(state_dir)
-    evidence, _bad = load_evidence(state_dir)
-    th, from_profile = saturation_thresholds(state)
+    th, _ = saturation_thresholds(state)
     rows = saturation_rows(state, evidence, th)
 
     by_id = {r["claim_id"]: r for r in rows}
@@ -1278,46 +1404,96 @@ def cmd_stop_check(args):
     pend = executable_queries(state)
     tp = time_policy(state)
     stale = [r["claim_id"] for r in rows if r["no_recent"] and r["evidence"] > 0]
-    iters = state.get("search_budget", {}).get("iterations", 0)
-    max_iters = state.get("search_budget", {}).get("max_iterations", 0)
+
+    b = state.setdefault("search_budget", {})
+    if advance:
+        advance_iterations(state, 1, clamp=True)
+    iters = int(b.get("iterations") or 0)
+    max_iters = int(b.get("max_iterations") or 0)
 
     if high and not need:
-        verdict, reason = "FINALIZE", "所有 high Claim 已裁决"
+        verdict, reason, kind = "FINALIZE", "所有 high Claim 已裁决", "all_high_judged"
     elif high and all(sat.get(c["id"], {}).get("stopped") for c in high):
-        verdict, reason = "FINALIZE", "所有 high Claim 已达证据饱和"
+        verdict, reason, kind = "FINALIZE", "所有 high Claim 已达证据饱和", "saturated"
     elif not pend:
-        verdict, reason = "FINALIZE", "无可执行的 query（额度耗尽或无 pending）"
+        verdict, reason, kind = "FINALIZE", "无可执行的 query（额度耗尽或无 pending）", "budget_exhausted"
     elif stale:
         # 时效缺口：还有额度就不许拿旧结论收口，先补近年检索
-        verdict = "CONTINUE"
+        verdict, kind = "CONTINUE", "time_gap"
         reason = (f"{', '.join(stale)} 是 evolving Claim 但没有 {tp['window']} 年内的证据"
                   f"（cutoff {tp['cutoff']}）——先补近年检索；"
                   f"或确认是永真事实后标 time_sensitivity=timeless")
     elif max_iters and iters >= max_iters:
-        verdict, reason = "FINALIZE", f"iterations {iters} 已达上限 {max_iters}"
+        verdict, reason, kind = "FINALIZE", f"iterations {iters} 已达上限 {max_iters}", "iteration_cap"
     else:
-        verdict = "CONTINUE"
+        verdict, kind = "CONTINUE", "continue"
         if newly:
             reason = f"本次新饱和 {', '.join(newly)}；仍有 {len(pend)} 条可执行 query"
         else:
             reason = f"仍有 {len(pend)} 条可执行 query，未裁决 high Claim: {', '.join(need) or '无'}"
 
+    stopped_high = [c["id"] for c in high if sat.get(c["id"], {}).get("stopped")]
+    # closure 只在收口时写：它回答「为什么停」，CONTINUE 期间必须清掉上一轮的旧值
+    if verdict == "FINALIZE":
+        state["closure"] = build_closure(kind, reason, iters, max_iters, len(pend),
+                                         need, stopped_high)
+    else:
+        state.pop("closure", None)
+
+    return {"rows": rows, "newly": newly, "verdict": verdict, "reason": reason, "kind": kind,
+            "pending": pend, "pending_ids": [q["id"] for _c, q in pend],
+            "iterations": iters, "max_iterations": max_iters, "stale": stale,
+            "unresolved_high": need, "stopped_high": stopped_high, "thresholds": th,
+            "from_profile": saturation_thresholds(state)[1]}
+
+
+def build_closure(kind: str, reason: str, iters: int, max_iters: int, pending: int,
+                  unresolved: list, stopped_high: list, agent_reason: str = "") -> dict:
+    """收口记录。kind 区分「找够了」和「没预算了」——后者必须显式写进报告，
+    否则读者会以为结论是查全了才下的。"""
+    out = {
+        "kind": kind,
+        "verdict": "FINALIZE",
+        "reason": reason,
+        "iterations": int(iters),
+        "max_iterations": int(max_iters),
+        "pending_queries": int(pending),
+        "unresolved_high_claims": list(unresolved),
+        "saturated_high_claims": list(stopped_high),
+    }
+    if agent_reason:
+        out["agent_reason"] = agent_reason
+    return out
+
+
+def cmd_stop_check(args):
+    """自动 Evidence Saturation：把已达饱和判据的 Claim 落盘为 stopped，并给出循环判决。"""
+    state_dir = Path(args.dir)
+    state, path = load_state(state_dir)
+    evidence, _bad = load_evidence(state_dir)
+    res = evaluate_stop(state, evidence, advance=not getattr(args, "no_advance", False))
     save_state(path, state)
 
     if args.json:
-        print(json.dumps({"verdict": verdict, "reason": reason, "newly_stopped": newly,
-                          "executable_queries": [q["id"] for _c, q in pend],
-                          "rows": rows}, ensure_ascii=False, indent=2))
+        payload = {k: res[k] for k in ("verdict", "reason", "kind", "iterations",
+                                       "max_iterations", "unresolved_high", "stale")}
+        payload["newly_stopped"] = res["newly"]
+        payload["executable_queries"] = res["pending_ids"]
+        payload["rows"] = res["rows"]
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
-        if not from_profile:
+        if not res["from_profile"]:
+            th = res["thresholds"]
             print(f"NOTE: state 未记录 saturation 阈值，按默认判据判定 "
                   f"(indep>={th['min_independent']} rounds>={th['max_rounds_without_change']} "
                   f"dup>{th['duplicate_rate']})")
-        for r in rows:
+        sat = state.get("saturation", {})
+        for r in res["rows"]:
             print(f"{r['claim_id']:<8}{'ev':>0}={r['evidence']:<3} "
                   f"{'STOPPED' if sat.get(r['claim_id'], {}).get('stopped') else '-':<8}"
                   f"{','.join(r['flags']) or '(未饱和)'}")
-        print(f"\n{verdict}: {reason}")
+        print(f"iterations  {res['iterations']}/{res['max_iterations']}")
+        print(f"\n{res['verdict']}: {res['reason']}")
     return 0
 
 
@@ -1346,20 +1522,25 @@ def cmd_topk(args):
 
 
 def cmd_consume(args):
-    try:
-        cur = consume_budget(Path(args.dir), args.channel, args.queries, args.results)
-    except ValueError as e:
-        sys.exit(f"FATAL: {e}")
+    """记账入口。iterations 是全局计数，results 是通道计数，两者互不依赖。
+
+    query 计数一律走 `mark-query`（receipt 派生），本命令不接受也不代理。
+    """
     if args.iterations:
         state, path = load_state(Path(args.dir))
-        b = state["search_budget"]
-        n = b.get("iterations", 0) + args.iterations
-        if n > b.get("max_iterations", 0):
-            sys.exit(f"FATAL: iterations {n} 超过上限 {b.get('max_iterations')}")
-        b["iterations"] = n
+        try:
+            n = advance_iterations(state, args.iterations)
+        except ValueError as e:
+            sys.exit(f"FATAL: {e}")
         save_state(path, state)
-        print(f"iterations -> {n}/{b.get('max_iterations')}")
+        print(f"iterations -> {n}/{state['search_budget'].get('max_iterations')}")
         return 0
+    if not args.channel:
+        sys.exit("FATAL: 记 results 需要 --channel；只推进迭代用 --iterations")
+    try:
+        cur = consume_budget(Path(args.dir), args.channel, 0, args.results)
+    except ValueError as e:
+        sys.exit(f"FATAL: {e}")
     print(f"{args.channel}: queries={cur['queries']}/{cur['max_queries']} "
           f"results={cur['results']}/{cur['max_results']}")
     return 0
@@ -1397,11 +1578,12 @@ def main():
     ps.add_argument("dir")
     ps.set_defaults(func=cmd_saturation)
 
-    pu = sub.add_parser("consume", help="记账：累加某通道的 results 消耗（query 计数请用 mark-query）")
+    pu = sub.add_parser("consume", help="记账：累加 results 或推进 iterations（query 计数请用 mark-query）")
     pu.add_argument("dir")
-    pu.add_argument("--channel", required=True, choices=CHANNELS)
+    pu.add_argument("--channel", choices=CHANNELS, help="记 results 时必填")
     pu.add_argument("--results", type=int, default=0)
-    pu.add_argument("--iterations", type=int, default=0, help="主循环迭代计数（不指定 channel 语义时用）")
+    pu.add_argument("--iterations", type=int, default=0,
+                    help="推进主循环迭代计数（stop-check 已自动推进，通常无需手动调）")
     pu.set_defaults(func=cmd_consume)
 
     pn = sub.add_parser("next-query", help="挑下一条 pending 且所在通道仍有额度的 query")
@@ -1413,6 +1595,8 @@ def main():
     pk = sub.add_parser("stop-check", help="自动 Evidence Saturation：写回 stopped 并给出循环判决")
     pk.add_argument("dir")
     pk.add_argument("--json", action="store_true")
+    pk.add_argument("--no-advance", action="store_true",
+                    help="只看判决，不推进 iterations（默认每轮跑一次就 +1）")
     pk.set_defaults(func=cmd_stop_check)
 
     pt = sub.add_parser("topk", help="Evidence top-k 裁剪（取 relevance 最高的 k 条进上下文）")

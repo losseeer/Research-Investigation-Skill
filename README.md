@@ -40,7 +40,10 @@
 - **query 级记账**：每条检索都挂在 `search_plans` 的某条 Q 上，配额由「已执行收据」派生，同一条重复执行不重复扣。`by_channel` 计数手写无效——预算花在哪次检索上全程可回溯。
 - **预算档位**：`quick` / `standard` / `deep` 三档，同时控制检索额度与饱和判据阈值（详见「快速开始」第 4 步）。
 - **可控的网络代价**：429 / 5xx 指数退避后自动换出口重试（4xx 不重试），同一 URL 24 小时内的响应走磁盘缓存不重复抓；单次响应超 2MB 直接判失败而不截断，单条 query 最多取回 30 条。缓存命中的证据记录的是**当初抓取时间**，不是本次运行时间。
-- **自动收口**：`stop-check` 按档位阈值判定证据饱和、把 Claim 标记为 stopped 并给出 CONTINUE / FINALIZE 判决；`topk` 按相关度裁剪本轮进上下文的证据（≤10 条）。预算耗尽时强制出报告，不会无限搜索也不会硬凑结论。
+- **自动收口**：`stop-check` 按档位阈值判定证据饱和、把 Claim 标记为 stopped 并给出 CONTINUE / FINALIZE 判决，**同时自动推进 iterations**（迭代上限由脚本记账，不靠人工申报）；`topk` 按相关度裁剪本轮进上下文的证据（≤10 条）。预算耗尽时强制出报告，不会无限搜索也不会硬凑结论。
+- **收口可区分**：每次收口都写 `state.closure`，记录为什么停——`all_high_judged` / `saturated` 是查全了才停，`budget_exhausted` / `iteration_cap` / `agent_stop` 是**没查完**被迫停。后者会在报告 §12 强制列出未裁决的关键 Claim 与剩余 query，「没查到」不会被写成「不存在」。
+- **主通道覆盖门禁**：Claim 的 `type` 决定该去哪找证据（科学断言→论文，技术实现→代码，产品/市场→网页与产品）。关键 Claim 的检索计划缺主通道时 `check --stage 2` 直接拦下——不是少一条 query，是从一开始就找错地方。有额度却一个 query 都没排的通道也会告警（实测多份调研里额度没花完，根因是没排而不是分配错）。
+- **单通道不算饱和**：independence 按来源去重，同通道的不同来源照样计为独立（16 条论文能凑出 independence=8）。`saturation` 输出 `channels` 列，有效证据全在一个通道时告警；补不了副通道就得在裁决理由里写明限制。
 - **时效门禁**：每条 Claim 标注 `timeless`（永真事实：理论性质、上下界、已确立机制）或 `evolving`（能力边界 / 性能 / 现状，会随技术代际变化）。`evolving` Claim 要给出「目前仍成立」的结论，必须有近 2 年内的证据（窗口可按 Claim 或全局调整），否则校验直接拦下——不会让两年前的 LLM 结论冒充今天的现状。年份口径统一为「现状时点」（GitHub 取最后一次 push 的年，不是创建年），证据抓取时间距基准日过久也会提醒是旧快照。
 - **15 节调研报告**：从执行摘要、主张清单、已有工作综述，到瓶颈分析、时效声明、风险声明和建议的下一步，结构完整可直接用于汇报。语言跟随你的提问（中文提 Idea 出中文报告），语气严谨、结论先行，不写套话与背景介绍。
 
@@ -148,9 +151,10 @@ python3 scripts/validate_state.py init --idea "<idea>" --recency-window 5
 ### 5. 验证安装（可选）
 
 ```bash
-python3 tests/test_validate_state.py   # 79 项：schema / 预算 / 档位 / query 记账 / 自动饱和 / 时效门禁 / 写回 / 收口
-python3 tests/test_network.py          # 15 项：Fetch 上限 / 重试退避 / 缓存（全离线，不真出网）
-python3 tests/test_pipeline.py         # 7 项：全链路离线回归（含 MODIFY / PIVOT 与过时证据拦截）
+python3 tests/test_validate_state.py       # 79 项：schema / 预算 / 档位 / query 记账 / 自动饱和 / 时效门禁 / 写回 / 收口
+python3 tests/test_iteration_closure.py    # 29 项：迭代记账 / closure 五种收口 / 单通道 / 主通道门禁 / next-query 排序
+python3 tests/test_network.py              # 15 项：Fetch 上限 / 重试退避 / 缓存（全离线，不真出网）
+python3 tests/test_pipeline.py             # 7 项：全链路离线回归（含 MODIFY / PIVOT、过时证据、缺主通道拦截）
 ```
 
 更直接的方式：新会话里发起一次小调研（见下一步），看它是否按「拆解 → 取证 → 报告」流程工作。
@@ -191,7 +195,7 @@ Idea → Claims → 多通道搜索 → Evidence → 逐条裁决
 | Stage | 做什么 |
 |---|---|
 | 0–1 | 初始化 state，把 Idea 拆成原子 Claim（≥5 条、≥3 种类型，逐条标 `time_sensitivity`） |
-| 2 | 为每条关键 Claim 规划跨通道检索 query（≥3 条） |
+| 2 | 为每条关键 Claim 规划跨通道检索 query（≥3 条，且必须覆盖该 Claim 类型对应的主通道） |
 | 3 | 执行检索，归一化为 Evidence（去重、标强度、标成熟度） |
 | 4 | 证据 → 裁决；证据不足的如实标注 `insufficient_evidence`；`evolving` Claim 的正向裁决须有窗口内证据 |
 | 5 | Prior Art 比对 + 瓶颈分类 + Novelty 评级 |

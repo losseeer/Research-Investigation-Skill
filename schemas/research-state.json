@@ -204,6 +204,26 @@
         }
       }
     },
+    "closure": {
+      "type": "object",
+      "description": "收口记录：为什么停。kind 区分「找够了」(all_high_judged/saturated) 与「没查完」(budget_exhausted/iteration_cap/agent_stop)，后者必须写进报告 §12 覆盖缺口",
+      "required": ["kind", "verdict", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": ["all_high_judged", "saturated", "budget_exhausted", "iteration_cap", "agent_stop"],
+          "description": "all_high_judged/saturated = 证据够了才停；budget_exhausted/iteration_cap = 没查完被迫停；agent_stop = 既没饱和也没耗尽额度，agent 主动收口"
+        },
+        "verdict": { "enum": ["FINALIZE", "CONTINUE"] },
+        "reason": { "type": "string", "minLength": 1 },
+        "agent_reason": { "type": "string", "description": "finalize --reason 传入的人工理由" },
+        "iterations": { "type": "integer", "minimum": 0 },
+        "max_iterations": { "type": "integer", "minimum": 0 },
+        "pending_queries": { "type": "integer", "minimum": 0, "description": "收口时仍未执行的 query 数" },
+        "unresolved_high_claims": { "type": "array", "items": { "type": "string" } },
+        "saturated_high_claims": { "type": "array", "items": { "type": "string" } }
+      }
+    },
     "saturation": {
       "type": "object",
       "description": "Evidence Saturation 计数，key 为 Claim id",

@@ -13,15 +13,19 @@
 
 ## 通道选择
 
+**主通道必须出现在计划里**——`check --stage 2` 对每个 high Claim 校验，`validate_state.py`
+的 `PRIMARY_CHANNEL` 是这张表的唯一真相。缺主通道不是「少一条 query」，是找错地方：
+后面 independence 再高，也是在同一条错路上堆量。
+
 | Claim type | 主通道 | 备选 |
 |---|---|---|
 | `scientific` | academic | web |
-| `technical` | github, academic | web |
-| `product` | product, web | github |
-| `market` | web, product | — |
+| `technical` | github | academic, web |
+| `product` | product | web, github |
+| `market` | web | product |
 | `user_problem` | web | product |
-| `application` | web, github | — |
-| `novelty` | academic, github | product |
+| `application` | github | web |
+| `novelty` | academic | github, product |
 
 ## query 写法（按通道）
 
@@ -95,7 +99,9 @@
 ## 自检
 
 - [ ] 每条 high Claim ≥3 条 query 且跨 ≥2 个通道？
+- [ ] 每条 high Claim 的 query 覆盖了它 type 对应的**主通道**？（`check --stage 2` 会卡）
 - [ ] 各通道 query 数都没超 `max_queries`？
+- [ ] 每个有额度的通道都排了 query？（实测多份调研里额度没花完，根因是没排而不是分配错）
 - [ ] 没有泛词、没有 Idea 标题原样照搬？
 - [ ] 每个 query 都能说清它在验证哪条 Claim？
 - [ ] `Q` 编号全局唯一且连续？

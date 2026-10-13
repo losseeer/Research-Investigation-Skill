@@ -183,9 +183,10 @@ python3 scripts/validate_state.py topk research/<slug> --claim C3 --k 8   # 本�
 循环执行入口：
 
 ```bash
-python3 scripts/validate_state.py next-query <dir>     # 挑下一条 pending 且还有额度的 query
+python3 scripts/validate_state.py next-query <dir>     # 挑下一条：high → 未裁决 → 未饱和 → 主通道
 python3 scripts/validate_state.py mark-query <dir> --id Q3 --status done --result-count 12
-python3 scripts/validate_state.py stop-check <dir>     # 自动饱和判定 + CONTINUE/FINALIZE
+python3 scripts/validate_state.py stop-check <dir>     # 自动饱和判定 + CONTINUE/FINALIZE，iterations 自动 +1
+python3 scripts/validate_state.py stop-check <dir> --no-advance   # 只看判决，不推进迭代
 ```
 
 **query 计数只有 `mark-query` 一个入口**：同一 Q 重复 mark 不重复计费，`by_channel[*].queries` 由 `search_budget.executed_queries` 收据派生（手写计数会被 `check` 判为 error）。检索脚本须带 `--query-id`；只给了 `--state-dir` 不给 `--query-id` 会被拒绝。
@@ -207,6 +208,13 @@ python3 scripts/validate_state.py stop-check <dir>     # 自动饱和判定 + CO
 9. **报告语言跟随用户输入**（中文提 Idea → 中文正文，英文提 → 英文；Evidence 原文摘录保留原文）。
    语气严谨学术、结论先行：不带修饰性形容词，不写过渡套话与通用背景介绍，
    同一结论只在一处展开、其余处引 Claim ID。
+10. **收口必须区分「查全了」和「查不动了」**：`state.closure.kind` 为 `budget_exhausted` /
+    `iteration_cap` / `agent_stop` 时，报告 §12 必须写明未覆盖方向与「没查到 ≠ 不存在」。
+11. **主通道覆盖**：high Claim 的 query 必须覆盖其 `type` 对应主通道
+    （scientific/novelty→academic，technical/application→github，product→product，
+    market/user_problem→web）。缺主通道 = 从一开始就找错地方，不是少一条 query。
+12. **单通道不算饱和**：independence 按来源去重，同通道不同来源仍计为独立。
+    正向裁决的 Claim 若有效证据全在一个通道，补副通道；补不了就在 rationale 写明限制。
 
 ## Resources
 
@@ -233,7 +241,7 @@ python3 scripts/validate_state.py stop-check <dir>     # 自动饱和判定 + CO
 ### scripts/
 - `search_academic.py` — OpenAlex + Crossref（+arXiv）
 - `search_github.py` — GitHub Search API
-- `validate_state.py` — state 唯一读写入口：init（**--profile** / **--recency-window**）/ check（stage 门禁 + 时效门禁）/ budget / saturation（输出 `as_of` 与 cutoff）/ consume / set-evidence / **mark-query（query 计费唯一入口）** / merge（Stage 4–6 写回，**search_plans 只接受全量**）/ finalize（把裁决回写 claim.status）/ profiles / next-query / stop-check / topk / **add-queries** / **add-evidence**
+- `validate_state.py` — state 唯一读写入口：init（**--profile** / **--recency-window**）/ check（stage 门禁 + 时效门禁 + 主通道覆盖 + 单通道告警）/ budget / saturation（输出 `as_of`、`cutoff`、`channels`）/ consume（results 与手动补迭代）/ set-evidence / **mark-query（query 计费唯一入口）** / merge（Stage 4–6 写回，**search_plans 只接受全量**）/ finalize（把裁决回写 claim.status，并补跑 stop-check 写 `closure`）/ profiles / next-query / stop-check（**iterations 自动推进**）/ topk / **add-queries** / **add-evidence**
 - `_common.py` — 网络层（代理回退 + 429 退避），被上面三个脚本共用
 
 ### schemas/

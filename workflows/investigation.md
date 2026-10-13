@@ -44,16 +44,36 @@ python3 scripts/validate_state.py init --idea "<idea>" --recency-window 5
 | `skip` | 主动放弃某 Claim（标 `insufficient_evidence`） | 预算不足或该方向明显无解 | `check` |
 | `stop` | 结束循环 | — | `finalize` |
 
+## Search Planning 的两条硬要求
+
+计划阶段最容易出的两类问题，都不是额度不够，而是**排错了 / 没排**：
+
+1. **主通道覆盖**。Claim 的 `type` 决定「该去哪找证据」：
+
+   | type | 主通道 | 理由 |
+   |---|---|---|
+   | `scientific` / `novelty` | `academic` | 科学断言查论文 |
+   | `technical` / `application` | `github` | 技术实现查代码 |
+   | `product` | `product` | 产品现状看已上线的产品 |
+   | `market` / `user_problem` | `web` | 市场与用户问题看公开讨论与调研 |
+
+   high Claim 的 query 里没有主通道 → `check --stage 2` 报错。
+   缺主通道不是「少了一条 query」，是**从一开始就找错地方**——后面 independence 再高，
+   也是在同一条错路上堆量。
+
+2. **别留空通道**。某通道有额度但 `search_plans` 里 0 条 query，`check` 给 warning。
+   实测多份调研里额度没花完的真正原因不是分配错，而是 planning 根本没往那个通道排，
+   等额度耗尽想补已经来不及——这条 warning 就是留给 stage 2 看的。
+
 ## 主循环
 
 ```text
 init → decompose → search-planning
 loop:
-    verdict = stop-check                       # 先问机器要不要停
+    verdict = stop-check                       # 每跑一次，iterations 自动 +1
     if verdict == FINALIZE → break
     qid = next-query                           # 挑 pending 且通道还有额度的 Q
     execute(qid) → mark-query --status done    # 唯一计费入口，幂等
-    consume --iterations 1
     check
 finalize → analyze → report
 ```
@@ -62,7 +82,6 @@ finalize → analyze → report
 
 ```bash
 python3 scripts/validate_state.py mark-query <dir> --id Q5 --status done --result-count 6
-python3 scripts/validate_state.py consume <dir> --channel academic --iterations 1
 python3 scripts/validate_state.py check <dir>
 ```
 
@@ -70,14 +89,18 @@ python3 scripts/validate_state.py check <dir>
 
 - query 计数只有 `mark-query` 一个入口（`executed_queries` 收据派生 `by_channel[*].queries`）；
   同一 Q 重复 mark 标注 `[already-charged]` 而不重复扣，`check` 会把手写计数判为 error。
-- `consume` 只负责 results 与 iterations；传 `--queries` 会直接报错。
+- `consume` 只负责 results（`--channel` 必填）与手动补迭代（`--iterations`）；没有 `--queries` 这个参数。
+- **iterations 由 `stop-check` 自动推进**，不需要也不应该手动 `consume --iterations`。
+  这个口子曾经只靠手动调用，实测多份调研里全是 0——迭代上限等于没设。
+  纯查状态用 `saturation` 或 `stop-check --no-advance`。
 - 检索脚本必须带 `--query-id`，且**在取数前**就校验该 Q 存在、通道吻合；不存在的 Q 直接 FATAL，
   一条证据都不落盘（旧行为是先写证据再报错，留下 query_id 悬空的孤儿条目，只能手删）。
 
 四个坑：① `check` 用 `not q.get("result_count")` 判定，所以 **0 条结果不能写 `done --result-count 0`**
 （会被判 "status=done 但缺 result_count"）。查到 0 条时标 `skipped`，并把「该 query 过窄返回 0 条」
-写进报告 §12 的覆盖缺口。② **`merge` 对 `search_plans` 是按 claim_id 覆盖整个 `queries` 数组**，
-补新 query 时只传新增项会把旧 query 静默删掉。增量追加用 `add-queries`：
+写进报告 §12 的覆盖缺口。② **`merge` 对 `search_plans` 是按 claim_id 整体替换 `queries` 数组**，不是按 Q id 逐条合并。
+补新 query 时只传新增项，会被 `detect_plan_shrink` 判为误删并拒绝写入（rc=1，一行都不写）。
+增量追加用 `add-queries`：
 
 ```bash
 # ✅ 追加：按 Q id 合并，不动已有条目；不给 id 会自动分配 Qn
@@ -133,6 +156,12 @@ python3 scripts/search_academic.py --query "cites:W123456789" --query-id Q6 \
 3. 新增结果与已有结果归一化（URL ∪ 标题）后重复率 > 60%。
 4. 主要 prior art 与技术路线已覆盖。
 
+**单通道不算饱和**。上面第 1 条的 independence 按 `(source, source_type)` 去重，
+同通道的不同来源照样计为独立——16 条 academic 证据能凑出 independence=8 并判饱和。
+所以 `saturation` 输出带 `channels` 列，全在一个通道时标 `⚠单通道`；
+正向裁决的 Claim 出现这种情况，`check` 给 warning（high Claim 单独措辞）。
+处置：补一个副通道；补不了就在 rationale 写明「结论仅由单一通道支撑」，别让饱和判据替它背书。
+
 用 `saturation` 子命令看实时状态：
 
 ```bash
@@ -152,6 +181,21 @@ python3 scripts/validate_state.py saturation <dir>
 
 所有 `importance == high` 的 Claim 都有 Judgment → 进入分析阶段。
 
+**为什么停必须能读出来**。`stop-check` 判 FINALIZE 时把 `state.closure` 写进 state，
+`finalize` 在没有 closure 时补跑一次 `stop-check` 兜底。`closure.kind` 五种：
+
+| kind | 含义 | 报告里怎么讲 |
+|---|---|---|
+| `all_high_judged` | 所有 high Claim 都裁决了 | 正常收口 |
+| `saturated` | 所有 high Claim 都证据饱和 | 正常收口 |
+| `budget_exhausted` | 没 query 可跑了（额度耗尽） | **没查完**，必须进 §12 覆盖缺口 |
+| `iteration_cap` | 迭代到上限 | **没查完**，同上 |
+| `agent_stop` | 既没饱和也没耗尽，agent 主动停 | **没查完**，同上 |
+
+后三种的 `unresolved_high_claims` 是非空的，`finalize` 会显式打印提醒：
+这些结论是「没查到」，不是「不存在」。报告 §12 必须区分这两种收口——
+读者无从判断结论是查全了才下的，还是查不动了才下的。
+
 ## 预算耗尽怎么办
 
 **不是硬凑结论，而是强制收口**：
@@ -163,6 +207,14 @@ python3 scripts/validate_state.py finalize <dir> --reason "预算耗尽："
 它把所有还没裁决的 Claim 一律补成 `insufficient_evidence`（`confidence` 强制 0.0），
 并把 state 推到 `verified`。幂等：已裁决的 Claim 不会被覆盖，但会把 Judgment 状态回写
 `claim.status`（避免两处状态长期不一致）。
+
+同时补跑一次 `stop-check`（不推进迭代）把 `closure` 落盘，并打印：
+
+```text
+finalize: 补齐 2 条未裁决 Claim（status -> verified）
+closure[budget_exhausted]: 无可执行的 query（额度耗尽或无 pending）
+  ⚠ 未裁决 high Claim ['C1'] —— 结论是「没查到」，不是「不存在」，必须写进报告 §12 覆盖缺口
+```
 
 这是红线之一：**没查到 ≠ 不存在**。收口时补的 rationale 会写明是「未执行/未完成检索」，
 报告 §12 还要把 `unavailable_channels`、未覆盖方向和时效缺口一起列出来。
@@ -193,7 +245,10 @@ unavailable 后，不要再对它发起请求，改走替代路径（见 `refere
 ## 每轮必看
 
 ```bash
-python3 scripts/validate_state.py budget <dir>      # 还剩多少额度
-python3 scripts/validate_state.py saturation <dir>  # 哪些方向已经饱和
+python3 scripts/validate_state.py budget <dir>      # 还剩多少额度（含 iterations）
+python3 scripts/validate_state.py saturation <dir>  # 哪些方向已经饱和、有没有单通道
 python3 scripts/validate_state.py check <dir>       # 结构是否还合法
 ```
+
+`saturation` 输出新增 `qual`（relevance ≥ 0.6 的有效证据数）与 `channels` 两列——
+看通道覆盖要读它们，别读 `ev`（`ev` 含低相关召回，会让人以为覆盖了多个通道）。

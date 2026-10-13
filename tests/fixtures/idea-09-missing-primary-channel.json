@@ -1,0 +1,79 @@
+{
+  "id": "idea-09-missing-primary-channel",
+  "title": "科学断言只查了代码和网页",
+  "raw": "用一个假设：间歇性禁食能显著提升健康人群的注意力持续时间",
+  "domain": "health",
+  "claims": [
+    {
+      "id": "C1",
+      "statement": "间歇性禁食能显著提升健康人群的注意力持续时间",
+      "type": "scientific",
+      "importance": "high",
+      "status": "unknown",
+      "confidence": 0.0,
+      "time_sensitivity": "evolving",
+      "notes": "负例：主通道 academic 一条都没排，只在 github/web 上打转"
+    },
+    {
+      "id": "C2",
+      "statement": "已有可穿戴设备能可靠量化注意力水平",
+      "type": "technical",
+      "importance": "high",
+      "status": "unknown",
+      "confidence": 0.0,
+      "time_sensitivity": "evolving"
+    },
+    {
+      "id": "C3",
+      "statement": "健康人群对禁食类干预的付费意愿偏低",
+      "type": "market",
+      "importance": "medium",
+      "status": "unknown",
+      "confidence": 0.0,
+      "time_sensitivity": "evolving"
+    },
+    {
+      "id": "C4",
+      "statement": "市面上已有面向禁食干预的消费级产品",
+      "type": "product",
+      "importance": "low",
+      "status": "unknown",
+      "confidence": 0.0,
+      "time_sensitivity": "evolving"
+    },
+    {
+      "id": "C5",
+      "statement": "注意力持续时间的标准化测量量表已可用于日常场景",
+      "type": "application",
+      "importance": "medium",
+      "status": "unknown",
+      "confidence": 0.0,
+      "time_sensitivity": "timeless",
+      "notes": "量表属机制性事实，多年不变"
+    }
+  ],
+  "queries": {
+    "C1": [
+      "github|intermittent fasting attention open dataset",
+      "github|fasting cognitive performance replication",
+      "web|间歇性禁食 注意力 研究 2025"
+    ],
+    "C2": [
+      "academic|wearable attention measurement validity",
+      "github|attention level wearable sensor",
+      "web|可穿戴 注意力 量化 准确性"
+    ],
+    "C3": [
+      "web|fasting intervention willingness to pay survey",
+      "product|fasting app pricing"
+    ],
+    "C4": [
+      "product|fasting tracker consumer app"
+    ],
+    "C5": [
+      "github|sustained attention test implementation"
+    ]
+  },
+  "expect_fail_stage": 2,
+  "expect_error_contains": ["未覆盖主通道", "academic"]
+}

@@ -58,7 +58,7 @@ python3 scripts/validate_state.py merge <dir> --data '{
 | 9 Technical Bottlenecks | `analysis.bottlenecks` |
 | 10 Novelty Analysis | `analysis.novelty` |
 | 11 Time Coverage | `time_policy` + 每个 Claim 的 `time_sensitivity` 与其证据年份 |
-| 12 Risks | `unavailable_channels` + 时效缺口 + 低强度证据 + research/fundamental 瓶颈 |
+| 12 Risks | `closure`（收口方式）+ `unavailable_channels` + 时效缺口 + 低强度证据 + 单通道支撑 + research/fundamental 瓶颈 |
 | 13 Recommendation | `recommendation` |
 | 14 Suggested Next Steps | 未裁决的 high Claim 的 `evidence_gaps` |
 | 15 Evidence | `relevance >= 0.6` 的全部条目 |
@@ -93,8 +93,14 @@ python3 scripts/validate_state.py merge <dir> --data '{
 - **每条结论后面跟 Claim ID 或 Evidence ID**。写不出来的，说明它在 state 里没有依据——删掉。
 - `implementation_level` 严格按 state 里的值陈述。`code` 就是「有代码」，
   不许写成「已有成熟产品」。
+- §12 收口方式**必填**，读 `state.closure`：先声明是「查全了才收口」还是「查不动了才收口」。
+  `budget_exhausted` / `iteration_cap` / `agent_stop` 属后者，必须接着写
+  `unresolved_high_claims`、还剩多少 query 没跑、`iterations / max_iterations`——
+  读者无从判断结论是查全了才下的还是查不动了才下的，这一条就是给他的。
 - §12 覆盖缺口**必填**：把 `unavailable_channels` 的通道、未执行的查询方向、
   以及因此可能遗漏的工作都写出来。这是「通道不可用 ≠ 没有 prior work」的落地位置。
+- 单通道支撑写进 §12 第 3 条：`saturation` 的 `channels` 只有一个通道时，
+  independence 会虚高（同通道不同来源仍计为独立），不能拿它当覆盖充分的证据。
 - §9 的结论（工程问题 vs 研究问题）取 `severity == high` 的瓶颈中类型最严重的一档。
 - 现状措辞（「目前 / 现在 / 已能 / 仍是」）只能用在 `evolving` 且有窗口内证据的 Claim 上。
 - 不要为了读起来顺畅而补 state 里没有的因果、规模数字或时间线。
@@ -109,6 +115,7 @@ python3 scripts/validate_state.py merge <dir> --data '{
 - [ ] 语言是否与用户输入一致？
 - [ ] 有没有同一结论在多节复述、过渡套话、或通用背景介绍？
 - [ ] 形容词与程度词是不是都有证据支撑？
+- [ ] §12 有没有写收口方式（`closure.kind`），没查完时有没有列未裁决 high Claim 与剩余 query？
 - [ ] §12 有没有写覆盖缺口？
 - [ ] §11 有没有交代 as_of / 窗口，以及每条 evolving Claim 的窗口内证据？
 - [ ] §3 里 `insufficient_evidence` 的 Claim 有没有说明「为什么没查到」？
